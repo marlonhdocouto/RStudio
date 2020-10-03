@@ -1,0 +1,419 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+plot(cars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+```{r}
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(Hmisc)
+library(ggplot2)
+library(ggpubr)
+library(cowplot)
+library(corrr)
+library(leaflet)
+library(leaflet.extras)
+library(wesanderson)
+library(tidyverse)
+library(ggcorrplot)
+```
+
+```{r}
+spot_data <- read.csv("spotify.csv")
+head(spot_data)
+str(spot_data)
+```
+
+Plotting popularity through the years. Makes sense given that popularity is constantly updated and older songs are less likely to be listened to:
+
+```{r}
+
+popularityYearPlot<-spot_data%>%group_by(year)%>%
+  summarise(averagePopularity=mean(popularity))%>%
+  ggplot(aes(year,averagePopularity))+geom_line()+labs(y="Average Popularity",x="Year")
+popularityYearPlot
+```
+
+Filter data for 2019:
+
+```{r}
+data_2019 <- spot_data %>% filter(year == 2019)
+head(data_2019)
+str(data_2019)
+```
+```{r}
+plot<-ggplot(data_2019)
+plot1<-plot+geom_point(aes(x=duration_ms,y=popularity, color=as.factor(year)), alpha=0.5, position = position_jitter())+
+  labs(color="Year", x='Duration', y="Popularity")+facet_wrap(~year)+theme(legend.position = "none")
+plot1
+```
+
+
+Pre-analysis by plotting duration and popularity for data in 2019:
+
+```{r}
+
+plot2019<-data_2019%>%ggplot(aes(duration_ms,popularity))+
+  geom_point(color="#99329F")+geom_smooth(aes(duration_ms,popularity))+
+  labs(x='Duration in mins',y='Popularity')+ggtitle("Correlation between popularity and duration of songs (2019)")+
+  theme(plot.title = element_text(size = 15,face = "bold",hjust = 0.5))
+plot2019
+```
+
+
+```{r}
+ggplot(data_2019, aes(x = duration_ms , y = popularity)) + 
+  geom_point()
+```
+
+Checking for correlations:
+
+```{r}
+cor(data_2019$duration, data_2019$popularity)
+cor(data_2019$speechines, data_2019$popularity)
+```
+
+Reading file data_w_genres since we believe this will reproduce better information about correlations between variables and popularity. Moreover, we expect different variables to have different weights when in comes to popularity:
+
+```{r}
+data_w_genres <- read.csv("data_w_genres.csv")
+data_w_genres[10000:10010 , ]
+
+#checking for unique genres... list is long, but we will be dividing it into 4 main groups:
+#all_genres <- unique(data_w_genres$genres)
+#all_genres
+```
+
+In the following lines, we will be separing data into rock, rap, jazz, and pop - the four broad categories we have found in the data. We are also filtering for some songs that might have mixed genres, i.e.: pop rock, rap rock, jazz rock, etc...
+
+```{r}
+##This makes rock songs their own table and assigns the general genre "genGenre" to Rock
+
+rock_songs <- data_w_genres[grep("rock" , data_w_genres$genres, value = FALSE), ]
+rock_songs$genGenre = "rock"
+head(rock_songs)
+
+#This does the same thing for Rap:
+
+rap_songs <- data_w_genres[grep("rap", data_w_genres$genres, value = FALSE) , ]
+
+#Then we eliminate genres that also have rock in them to maintain mainly rap:
+only_rap_songs <- rap_songs %>% filter(str_detect(rap_songs$genres, "rock") == FALSE)
+only_rap_songs$genGenre = "rap"
+```
+
+
+```{r}
+head(only_rap_songs)
+
+#This does the same thing for Jazz
+jazz_songs <- data_w_genres[grep("jazz" , data_w_genres$genres , value = FALSE) , ]
+
+#we then eliminate rock and rap in case there are mixed genres to maintain only Jazz:
+only_jazz_songs <- jazz_songs %>% filter(str_detect(jazz_songs$genres, "rock") == FALSE & str_detect(jazz_songs$genres , "rap") == FALSE)
+only_jazz_songs$genGenre = "jazz"
+head(only_jazz_songs)
+
+#same thing for pop songs:
+pop_songs <- data_w_genres[grep("pop" , data_w_genres$genres , value = FALSE) , ]
+
+only_pop_songs <- pop_songs %>% filter(str_detect(pop_songs$genres, "rock") == FALSE & str_detect(pop_songs$genres , "rap") == FALSE)
+only_pop_songs$genGenre = "pop"
+head(only_pop_songs)
+
+
+```
+
+Re-binding all genre dfs into one main df to explore popularity differences:
+
+```{r}
+new_genre_df <- rbind(rock_songs, only_rap_songs, only_jazz_songs, only_pop_songs)
+new_genre_df %>% ggplot(aes(x=genGenre, y=popularity, fill = genGenre)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7)) +
+  guides(fill=FALSE)
+```
+Analyzing specific Rock genres in dataframe and counting most popular genres:
+
+```{r}
+rock_songs_specific <- gsub(",.*", "", rock_songs$genres)
+rock_songs_new <- cbind(rock_songs, rock_songs_specific)
+
+rock_freq.df <- as.data.frame(table(rock_songs_new$rock_songs_specific))
+rock_freq.df <- rock_freq.df[order(rock_freq.df$Freq, decreasing = TRUE) , ]
+rock_freq.df
+```
+```{r}
+#BOXPLOT FOR SPECIFIC GENRES: Quite messy but it shows some subgenres are indeed more popular than others:
+
+rock_songs_new %>% ggplot(aes(x=rock_songs_specific, y=popularity, fill=rock_songs_specific)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7)) +guides(fill=FALSE)
+```
+Loudness and popularity, then liveness and popularity for Rock songs:
+
+```{r}
+ggplot(data=rock_songs)+geom_point(aes(x=loudness,y=popularity))+labs(title="popularity VS loudness in rock music")
+ggplot(data=rock_songs)+geom_point(aes(x=liveness,y=popularity))+labs(title="popularity VS liveness in rock music")
+```
+
+Same for Pop music:
+
+```{r}
+
+ggplot(data=only_pop_songs)+geom_point(aes(x=loudness,y=popularity))+labs(title="popularity VS loudness in pop music")
+ggplot(data=only_pop_songs)+geom_point(aes(x=liveness,y=popularity))+labs(title="popularity VS liveness in pop music")
+
+
+```
+
+For Jazz:
+
+```{r}
+
+ggplot(data=only_jazz_songs)+geom_point(aes(x=loudness,y=popularity))+labs(title="popularity VS loudness in Jazz music")
+ggplot(data=only_jazz_songs)+geom_point(aes(x=liveness,y=popularity))+labs(title="popularity VS liveness in Jazz music")
+
+```
+
+Lastly, for Rap:
+
+```{r}
+
+ggplot(data=only_rap_songs)+geom_point(aes(x=loudness,y=popularity))+labs(title="popularity VS loudness in Rap music")
+ggplot(data=only_rap_songs)+geom_point(aes(x=liveness,y=popularity))+labs(title="popularity VS liveness in Rap music")
+
+```
+
+
+Plotting the relationship between duration and popularity for rap songs.
+```{r}
+durationrap<-ggplot(only_rap_songs,aes(duration_ms, popularity))+
+  geom_point()+geom_smooth(aes(duration_ms,popularity),method = "lm")+labs(x="duration in mins")+
+  ggtitle("Rap and Rap subgenres")+theme(plot.title=element_text(hjust=0.5))
+durationrap
+
+```
+Plotting the relationship for all other three genres:
+```{r}
+rock_songs%>%ggplot(aes(log(duration_ms),log(popularity)))+geom_point()+geom_smooth(aes(log(duration_ms),log(popularity)),method = "lm")
+only_jazz_songs%>%ggplot(aes(duration_ms,popularity))+geom_point()+geom_smooth(aes(duration_ms,popularity), method = "lm")
+only_pop_songs%>%ggplot(aes(duration_ms,popularity))+geom_point()+geom_smooth(aes(duration_ms,popularity),method = "lm")
+
+```
+
+Filtering all genres for popularity greater than 30 so we can look only for songs with better streamings:
+
+```{r}
+rock_songs<-rock_songs%>%filter(popularity>0)
+only_jazz_songs<-only_jazz_songs%>%filter(popularity>0)
+only_pop_songs<-only_pop_songs%>%filter(popularity>0)
+only_rap_songs<-only_rap_songs%>%filter(popularity>0)
+
+```
+
+Looking into the correlations for duration, and popularity for the four main genres:
+
+```{r}
+cor(rock_songs$popularity,rock_songs$duration_ms)
+cor(only_jazz_songs$popularity,only_jazz_songs$duration_ms)
+cor(only_pop_songs$popularity,only_pop_songs$duration_ms)
+cor(only_rap_songs$popularity,only_rap_songs$duration_ms)
+```
+
+Reproducing correlational matrices for the four main genre groups:
+
+```{r}
+CorMatrixJazz<-cor(only_jazz_songs[,c("acousticness","danceability","duration_ms","energy","instrumentalness","liveness","speechiness","tempo","valence","popularity")])
+CorMatrixRock<-cor(rock_songs[,c("acousticness","danceability","duration_ms","energy","instrumentalness","liveness","speechiness","tempo","valence","popularity")])
+CorMatrixPop<-cor(only_pop_songs[,c("acousticness","danceability","duration_ms","energy","instrumentalness","liveness","speechiness","tempo","valence","popularity")])
+CorMatrixRap<-cor(only_rap_songs[,c("acousticness","danceability","duration_ms","energy","instrumentalness","liveness","speechiness","tempo","valence","popularity")])
+```
+
+Saving the heatmap matrices:
+```{r}
+png(height = 1200, width = 1500, pointsize = 15, filename = "matrixRap2.png")
+ggcorrplot(CorMatrixJazz,lab=TRUE,color=c("blue","white","red"),title="Correlation Matrix Jazz")+theme(plot.title=element_text(hjust=0.5, size = 0.1))
+png(height = 1200, width = 1500, pointsize = 15, filename = "matrixRap2.png")
+ggcorrplot(CorMatrixRock,lab=TRUE,color=c("blue","white","red"),title="Correlation Matrix Rock")+theme(plot.title=element_text(hjust=0.5, size = 0.1))
+png(height = 1200, width = 1500, pointsize = 15, filename = "matrixRap2.png")
+ggcorrplot(CorMatrixPop,lab=TRUE,color=c("blue","white","red"),title="Correlation Matrix Pop")+theme(plot.title=element_text(hjust=0.5, size = 0.1))
+png(height = 1200, width = 1500, pointsize = 15, filename = "matrixRap2.png")
+ggcorrplot(CorMatrixRap,lab=TRUE,color=c("blue","white","red"),title="Correlation Matrix Rap")+theme(plot.title=element_text(hjust=0.5, size = 0.1))
+```
+
+CHECKING THE TABLES SO WE CAN RUN A MULTIPLE LINEAR REGRESSION ON:
+
+Y= Popularity
+X1= Duration
+X2=Danceability
+X3=Energy
+X4=Liveness
+X5 = Loudness
+
+The following models are divided into 1 and 2. The first is the one with only variables first analyzed by us: danceability, duration, energy, liveness, loudness; The second will include all numerical variables in the Spotify data that were first analyzed but did not seem significant at the time. Summaries are both for models 1 and 2:
+
+Model for Rock:
+
+```{r}
+linearModelRock1<-lm(formula=popularity~danceability+duration_ms+energy+liveness+loudness,data = rock_songs)
+linearModelRock2<-lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+loudness+speechiness+tempo+valence+popularity,data = rock_songs)
+summary(linearModelRock1)
+summary(linearModelRock2)
+```
+The second completed model increases R-square for rock from 0.20 to 0.29
+
+Model for Jazz:
+
+```{r}
+linearModelJazz1<-lm(popularity~danceability+duration_ms+energy+liveness+loudness,data=only_jazz_songs)
+linearModelJazz2<-lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence+popularity,data=only_jazz_songs)
+summary(linearModelJazz1)
+summary(linearModelJazz2)
+```
+The model for Jazz changes from 0.18 to .35 as all other song characteristics are included. 
+
+Model for Pop:
+
+```{r}
+linearModelPop1<-lm(popularity~danceability+duration_ms+energy+liveness+loudness,data=only_pop_songs)
+linearModelPop2<-lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence+popularity,data=only_pop_songs)
+summary(linearModelPop1)
+summary(linearModelPop2)
+```
+For pop, the R-square changes from 0.23 to 0.35:
+
+Model for Rap:
+
+```{r}
+linearModelRap1<-lm(popularity~duration_ms+energy+liveness+loudness,data=only_rap_songs)
+linearModelRap2<-lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence+popularity,data=only_rap_songs)
+summary(linearModelRap1)
+summary(linearModelRap2)
+
+```
+Data seems to indicate that for all other models except Rap, the R-squared is greater for the full model with all variables. Since many of the variables do have high pvalues in different genres, we will try to look for transformations to find ways in which we can improve our model and R-squared. 
+
+First, looking into a boxcox to check what transformation is appropriate for model 1 and 2:
+
+```{r}
+library(MASS)
+bcRock<-boxcox(lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence+popularity,data=rock_songs))
+bcJazz<-boxcox(lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence+popularity,data=only_jazz_songs))
+bcPop<-boxcox(lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence+popularity,data=only_pop_songs))
+bcRap<-boxcox(lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence+popularity,data=only_rap_songs))
+lambdaRock<-bcRock$x[which(bcRock$y==max(bcRock$y))]
+lambdaJazz<-bcJazz$x[which(bcJazz$y==max(bcJazz$y))]
+lambdaPop<-bcPop$x[which(bcPop$y==max(bcPop$y))]
+lambdaRap<-bcRap$x[which(bcRap$y==max(bcRap$y))]
+round(lambdaRock,2)
+round(lambdaJazz,2)
+round(lambdaPop,2)
+round(lambdaRap,2)
+
+```
+
+Looking at the transformation suggested by the Box-Cox method, we will be looking at a lambda of 1.64for rap. Trying that transformation first with the equation: (y^lambda - 1 / lambda)
+
+(y^1.64 - 1 /1.64)
+
+Trying transformation for the rap model:
+```{r}
+
+gala<-lm((popularity^2-1/2)~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence,data=only_rap_songs)
+plot(fitted(gala),resid(gala),col="dodgerblue", pch=20, cex=1.5, xlab="Fitted", ylab = "Residuals")
+abline(h=0,lty=2,col="darkorange",lwd=2)
+```
+
+The graph of residuals look quite well for Rap. Looking at the summary for the linear regression with the transformation next:
+```{r}
+TransformedRapModel<-lm((popularity^1.64-1/1.64)~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence,data=only_rap_songs)
+summary(TransformedRapModel)
+```
+R-SQUARED: 0.2749. Model without speechiness that has such a high p-value:
+```{r}
+TransformedRapModel2<-lm((popularity^1.64-1/1.64)~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+tempo+valence,data=only_rap_songs)
+summary(TransformedRapModel)
+summary(TransformedRapModel2)
+AIC(TransformedRapModel)
+AIC(TransformedRapModel2)
+```
+Second model has lower AIC, so we are going to use that one for Rap:
+
+Therefore, we are going to be using Box-Cox transformations for all other models. 
+
+Tranformations for Rock:
+
+(y^lambda - 1 / lambda)
+
+(y^1.15 - 1 /1.15)
+```{r}
+
+galaRock<-lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence,data=rock_songs)
+plot(fitted(galaRock),resid(galaRock),col="dodgerblue", pch=20, cex=1.5, xlab="Fitted", ylab = "Residuals")
+abline(h=0,lty=2,col="darkorange",lwd=2)
+
+
+```
+For Rock, since lambda is so close to one, we decided not to transform. Its linear regression:
+
+```{r}
+TransformedRockModel<-lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence,data=rock_songs)
+summary(TransformedRockModel)
+```
+Because duration does not seem to impact the model and neither is tempo. We are trying without both variables and checking AIC for each:
+
+```{r}
+TransformedRockModel2<-lm(popularity~acousticness+danceability+tempo+energy+instrumentalness+liveness+speechiness+valence,data=rock_songs)
+summary(TransformedRockModel)
+summary(TransformedRockModel2)
+AIC(TransformedRockModel)
+AIC(TransformedRockModel2)
+
+```
+Second model has much lower AIC, therefore we will be using that one. 
+
+Transformation for Jazz: since the lambda is close to one, we decided to not transform it. 
+
+
+```{r}
+TransformedJazzModel<-lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence,data=only_jazz_songs)
+summary(TransformedJazzModel)
+
+```
+R-squared: 0.387. speechiness, tempo, and instrumentalness have high p-values, therefore, we are checking a model without these variables and compare AIC:
+
+```{r}
+TransformedJazzModel2<-lm(popularity~acousticness+danceability+duration_ms+energy+liveness+valence,data=only_jazz_songs)
+summary(TransformedJazzModel)
+summary(TransformedJazzModel2)
+AIC(TransformedJazzModel)
+AIC(TransformedJazzModel2)
+```
+No high difference between both AIC. We are therefore keeping the second model for sake for sake of those high p-values. 
+
+Next, transformation for pop: since the lambda is also in the 1 range, we decided not to transform it and keep our previous model:
+```{r}
+TransformedPopModel<-lm(popularity~acousticness+danceability+duration_ms+energy+instrumentalness+liveness+speechiness+tempo+valence,data=only_pop_songs)
+summary(TransformedPopModel)
+```
+
+
+```
+Because there are no significant differences, we are choosing to leave model without speechiness. 
+
