@@ -1,0 +1,293 @@
+---
+title: "housing.Rmd"
+output: html_document
+Author: "Marlon Do Couto - Duke University MQM: Business Analytics 2021"
+Description: "the case will analyse house prices in Seattle, WA and investigate correlations between price and other housing variables. The model will be use to predict prices in the Seattle region"
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+Downloading the necessary libraries:
+```{r}
+library(ggplot2)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(Hmisc)
+library(ggplot2)
+library(ggpubr)
+library(cowplot)
+library(corrr)
+library(leaflet)
+library(leaflet.extras)
+library(wesanderson)
+library(readxl)
+
+```
+Reading the housing file into housing dataframe:
+```{r}
+
+housing<-read.csv("kc_house_data.csv")
+head(housing)
+summary(housing)
+
+```
+
+Setting up a map to check price and longitude and latitude:
+
+
+```{r}
+
+leaflet_map<-leaflet(options = leafletOptions(minZoom = 0, maxZoom = 20))%>%
+  addTiles()%>%
+  setView(lng=-122.257,lat=47.5112, zoom=12)
+leaflet_map
+
+
+```
+
+Map set up to Seattle. Now I will plot listings for first five thousand observations
+
+```{r}
+
+seattle<-housing[,c("long","lat")]
+
+leaflet_map<-leaflet(data=seattle, options = leafletOptions(minZoom = 0,maxZoom = 18))%>%
+  addTiles()%>% setView(lng=-122.5, lat=47.6, zoom = 11)%>%
+  addCircleMarkers(lng=~long,lat=~lat, radius = 5, color = 'grey', stroke = FALSE, fillOpacity = 0.6)
+
+leaflet_map
+
+```
+
+Adding heatmap with price intensity:
+
+
+```{r}
+
+max<- max(housing$price)
+
+leaflet_map2<-leaflet(data=housing, options = leafletOptions(minZoom = 0,maxZoom = 18))%>%
+  addTiles()%>% setView(lng=-122.25, lat=47.6, zoom = 11)%>%
+  addHeatmap(lng=~long,lat=~lat, intensity = ~price, minOpacity = 0.2, max=max, radius = 6, blur = 7)
+
+leaflet_map2
+
+
+```
+
+Looking at the correlation between longitude and price of houses:
+```{r}
+ggplot(housing, aes(lat,price))+geom_point()
+ggplot(housing, aes(lat,log(price)))+geom_point()
+
+ggplot(housing, aes(long,price))+geom_point()
+ggplot(housing, aes(long,log(price)))+geom_point()
+
+```
+The distribution for prices is similar across all latitudes when it comes to log prices is similar across all latitudes. However, the distribution shifts up around the latitudes 47.45 and 47.69 suggesting higher prices in that region. Next, looking at longitude, we see that there is a wider distribution of prices around longitude -122.55 through -122.00. Next, lets check the areas on these particular regions using a leafmap:
+```{r}
+housing2<-housing%>%filter(long > (-122.25) & long < (-122.20))%>%filter(lat > 47.5 & lat < 47.60)
+
+leaflet_map3<-leaflet(data=housing2, options = leafletOptions(minZoom = 0, maxZoom = 20))%>%
+  addTiles()%>%
+  setView(lng=-122.25,lat=47.5, zoom=11)%>%
+  addCircleMarkers(lng = ~long,lat = ~lat, radius = 4, fillOpacity = TRUE)
+leaflet_map3
+```
+This makes sense from my own knowledge of the city with higher prices in Mercer Island and around Lake Washington. It also seems like prices are higher around the water. More on that soon. 
+
+Now, I want to check the prices per neighborhood in the city. I suspect there will be differences in distribution of prices in some neighborhoods.I will now checking the unique zip codes in the dataset and transferring them into neighborhoods by using an excel file with neighborhood names:
+
+```{r}
+zipcodelist<-unique(housing$zipcode)
+zipcodelist<-sort(zipcodelist)
+
+#converting to dataframe so I can export to excel and add the neighborhood names so I can cbind it to the original dataframe.
+zipcodelist<-as.data.frame(zipcodelist)
+zipneighborhood<-read_excel("zipcode.xlsx")
+zipneighborhood<-as.data.frame(zipneighborhood)
+head(zipneighborhood,5)
+colnames(zipneighborhood)<-c("zipcode","neighborhood")
+
+#joining both datasets:
+housing_w_neigh<-full_join(housing,zipneighborhood, by="zipcode")
+
+
+
+```
+Next I use a boxplot to see the price distribution for all neighborhoods in the dataset:
+
+
+```{r}
+
+price_neighborhood<-ggplot(housing_w_neigh,aes(factor(neighborhood),price))+geom_boxplot(aes(fill=neighborhood))+
+  scale_y_continuous(trans = "log2", labels = scales::dollar_format())+labs(title = "Price per neighborhood", y="Price", x= "Neighborhood/Area")+theme(legend.position = "none", axis.text.x = element_text(angle = 90) )
+#to save graph in case needed:
+#ggsave("priceneighborhood.png",price_neighborhood)
+price_neighborhood
+
+
+```
+It looks like there is a difference between price ranges in different neighborhoods in Seattle with the highest ones being Capitol Hill, Medina, and Mercer Island. Now, let's look at prices houses with a waterfront and those with no waterfront. Analyzing all houses in the region, we do see a significant differece in price for those who are by the water and those that are not:
+
+```{r}
+
+pricewaterfront<-ggplot(housing_w_neigh,aes(as.factor(waterfront),price, fill=as.factor(waterfront)))+geom_boxplot()+
+  scale_y_continuous(trans = "log2", labels = scales::dollar_format())+scale_fill_discrete(labels=c("No","Yes"))+
+labs(title = "Price and Waterfront", y="Price", x= "Neighborhood/Area", fill="Waterfront?")
+#ggsave("pricewaterfront.png",pricewaterfront)
+pricewaterfront
+
+```
+Now, it will be helpful to look at different neighborhoods and see if the pattern repeats across neighborhoods that have waterfront houses.It looks like the pattern repeats itself in neighborhoods as well:
+
+```{r}
+
+price_per_neighborhood_waterfront<-housing_w_neigh%>%filter(neighborhood %in% c("Mercer Island","Kirkland", "Renton","Redmond", "Bellevue"))%>%
+  ggplot(aes(neighborhood,price,fill=factor(waterfront)))+geom_boxplot()+scale_y_continuous(trans = "log2", labels = scales::dollar_format())+
+  scale_fill_discrete(labels=c("No","Yes"))+
+labs(title = "Price per neighborhood and Waterfront", y="Price", x= "Neighborhood/Area", fill="Waterfront?")+theme(axis.text.x = element_text(angle = 10))
+price_per_neighborhood_waterfront
+#ggsave("priceneighborhoodwaterfront.png",price_per_neighborhood_waterfront)
+
+
+```
+Now, let's looking at the distribution of prices for waterfront and no waterfront houses:
+
+```{r}
+distribution_waterfront<-housing_w_neigh%>%filter(waterfront==1)%>%ggplot(aes(price))+geom_histogram()+scale_x_continuous(labels = scales::dollar_format())+labs(title = "Price distribution for listings with a waterfront")
+distribution_waterfront
+#ggsave("histogramwaterfront.png",distribution_waterfront)
+```
+Eleven observations priced over 4M are pushing the standard deviation and average price of these houses up. Now, let's look at the distribution for prices without waterfront.
+
+```{r}
+
+distribution_nowaterfront<-housing_w_neigh%>%filter(waterfront==0)%>%ggplot(aes(price))+geom_histogram()+scale_x_continuous(labels= scales::dollar_format())+coord_cartesian(xlim = c(0,4000000))+labs(title = "Price distribution for listings with no waterfront")
+distribution_nowaterfront
+#ggsave("histogramNOwaterfront.png",distribution_nowaterfront)
+
+```
+For the houses with no waterfront, prices are more concentrated around the $500,000 mark. Though again, the tail does suggest some houses in the higher end of prices, reaching $3M. 
+
+Now, let's explore other variables in the dataset. Following it is the plots for the relationship between square feet and price, condition and price, and number of bedrooms and price:
+
+```{r}
+ggplot(housing_w_neigh,aes(sqft_living, price))+geom_point()+labs(title="Sqft and Price")+scale_y_continuous(labels= scales::dollar_format())
+ggplot(housing_w_neigh,aes(factor(condition), price,fill=factor(condition)))+geom_boxplot()+labs(title="Condition and pricing of houses", y="Condition")+scale_y_continuous(labels= scales::dollar_format())
+ggplot(housing_w_neigh, aes(factor(bedrooms), price, fill=factor(bedrooms)))+geom_boxplot()+labs(title="Number of bedrooms and prices", y="Bedrooms")+scale_y_continuous(labels = scales::dollar_format())
+```
+The plot of prices seems to "funnel out" as the square feet increases. It seems that we can benefit from a log transformation in this case to better understand this relationship:
+```{r}
+ggplot(housing_w_neigh,aes(sqft_living, log(price)))+geom_point()+labs(title="Sqft and Price")+geom_smooth(aes(sqft_living,log(price)))
+```
+It looks like prices increase as you add sqft_living until a point around 5000 sqft. Then it "flattens out".
+
+Next, let's look whether condition of houses impacts the prices. It looks as the relationship holds with houses in the higher condition being more expensive than other houses with lower conditions. We will be able to check the relationship further once we try different models to see if it holds true holding all else equal.
+```{r}
+ggplot(housing_w_neigh, aes(price, factor(grade), color = factor(grade)))+geom_point()+scale_x_continuous(labels = scales::dollar_format())+labs(title = "Condition and prices of house", y = "Condition")
+```
+Lastly, to conclude some explanatory graphics, let's check the relationship between bedrooms and bathrooms and how they might impact the prices of houses.
+```{r}
+ggplot(housing_w_neigh,aes(factor(bathrooms),log(price), fill=factor(bathrooms)))+geom_boxplot()
+ggplot(housing_w_neigh,aes(factor(bedrooms),log(price), fill=factor(bedrooms)))+geom_boxplot()
+```
+
+Now, let's start checking linear relationships on the data. First the plot I ran earlier with price and sqft living:
+```{r}
+ggplot(housing_w_neigh, aes(sqft_living, log(price)))+geom_point()+geom_smooth(aes(sqft_living,log(price)), color="red", method = "lm")
+
+```
+Now let's run a linear regression in these two variables to better understand the correlation:
+```{r}
+price_Sqft<-lm(log(price)~sqft_living,housing_w_neigh)
+summary(price_Sqft)
+```
+An increase in square footage in houses is related on average to a 3.98% increase in the price of houses in the Seattle area. We can be confident an increase in square foot in a house will lead to an increase in price between 0.0322% and 0.0474% (two standard errors below and above the mean) 95% of the time. 
+
+To improve the model, I will add some of the variables I looked at earlier and saw a correlation with price. 
+```{r}
+first_model<-lm(log(price) ~ bedrooms  + bathrooms + sqft_living + waterfront + condition, data=housing_w_neigh)
+summary(first_model)
+```
+The model still hasn't improved much. First, I will try to check interactions between the variables to see if we can find some other predictive power within the variables. There might be some interaction happening between the size of the house, its condition, how many bedrooms it has and if it is with a waterfront. The model below (second_model) will check for these interactions:
+
+```{r}
+second_model<-lm(log(price) ~ bedrooms  + bathrooms + sqft_living + waterfront + condition + condition*waterfront +sqft_living*waterfront+sqft_living*condition + sqft_living*bedrooms, data=housing_w_neigh)
+summary(second_model)
+```
+There seems to be a correlation between the size of the house and whether it is by the waterfront, the size and its condition, and number of bedrooms and its size. I will come back to the interpretation soon because there are still the neighborhoods that need to be added to the model. The next model will include the significant interactions discussed above with the added neighborhoods:
+
+```{r}
+third_model<-lm(log(price) ~ bedrooms  + bathrooms + sqft_living + waterfront + condition + sqft_living*waterfront + sqft_living*condition + sqft_living*bedrooms + neighborhood, data=housing_w_neigh)
+summary(third_model)
+```
+Neighborhoods have a significant predictive power in this case. The only expections are Tukwilla and Federal Way. It is important to recognize that these are actually cities outside Seattle. From the data it seems like the area itself is not predictive enough. Perhaps, for Federal Way and Tukwilla, other variables will be more important. These need to be further investigated. 
+
+Now, I am interested in learning about an additional interaction: neighborhoods and whether the house is in a waterfront or not. I will run the fourth model to check these below:
+```{r}
+fourth_model<-lm(formula = log(price) ~ bedrooms + bathrooms + sqft_living + 
+    waterfront + condition + sqft_living * waterfront + sqft_living * 
+    condition + sqft_living * bedrooms + neighborhood +neighborhood*waterfront, data = housing_w_neigh)
+summary(fourth_model)
+```
+This model has a slightly increase in predictive value. However, lots of the variables do not have a waterfront which renders the model not very useful.For some of the interactions, there might seem to be some correlation (for instance, see the interaction for Vashon and for Federal Way. The Federal Way result is particularly interesting since we saw in the model before that neighborhood itself was not predictive enough for houses in this area) The relationship could be further explored on only the neighborhoods/areas with a waterfront. 
+
+I will continue the explorations by running them through the Akaike Information Criterion (AIC). Given the many variables in the model, it could be concerning that their predictive power is only due to the many variables added to it. 
+```{r}
+AIC(first_model)
+AIC(second_model)
+AIC(third_model)
+AIC(fourth_model)
+
+```
+Again, the AIC for the fourth model with interactions between the neighborhoods and waterfront is slightly better than the one without those interactions. However, in my view, the gain of predictive power here is not high enough to guarantee the use of this model. I will proceed with the third model from now on to conduct my explanatory analysis and try to check how precise the model is against a set of the data. But before, I am adding variable view to the model:
+```{r}
+third_model_final<-lm(log(price) ~ bedrooms  + bathrooms + sqft_living + waterfront + condition + view + waterfront + sqft_living*waterfront + sqft_living*condition + sqft_living*bedrooms + neighborhood, data=housing_w_neigh)
+summary(third_model_final)
+AIC(third_model_final)
+```
+The third model with view and the interaction between view and waterfront has a higher predictive power than the first third model. Its AIC is also lower so we will continue with explanatory analysis in this model. Some of the interesting highlights:
+
+1. An additional bedroom is related on average to a 6.8% increase in the price of a house. An additional bathroom is related on average to a 4.5% increase in prices. 
+
+2. A one square feet increase in a house is related to an average 0.054% increase in prices. While this does not too significant, rarely houses will increase in sizes by only a few footage. Moreover, when talking about percentages in an area with high real estate prices, such as Seattle, this number can significant for buyers.
+
+  i. An increase in square footage will result in lower increases for houses with a waterfront: 0.0495%. This might be due to the fact that waterfront          houses already require such a premium in price that homeowners are not willing or able to charge much more for the increases in square footage. 
+
+  ii.Pay attention to the interaction between bedrooms and square footage. This means that if you increase the number of bedrooms in a house with same          square footage, the price will decrease by 0.004%. This might be related to the fact that smaller bedrooms in a house actually will have a negative        effect in the prices.
+  
+  iii.A house with a lower condition will have lower increase in prices due to increases in square footage: 0.052% per additional square foot.
+
+
+4. Prices with a waterfront are on average 74.5% more expensive than prices without it. Moreover, a view will increase the price of a house by 7.7%. As the condition of the house improves by one notch, the price goes up by 7.9%.
+ 
+5. As mentioned previously, houses in Federal Way (a city in the Greater Seattle region) do not see an increase or decrease in prices only because of their location. The same is true for Tukwilla. Further investigation is needed for this two cities. All else equal, houses in the Capitol Hill neighborhood will cost 188% more while house in Medina will cost 277% more. These two seem to be the most significant increases in price percentage as it relates to the neighborhood. 
+
+
