@@ -1,0 +1,240 @@
+---
+title: "Case Study"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# How much should properties be worth in Milwaukee, Wisconsin? 
+
+
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(readr)
+library(Hmisc)
+library(ggpubr)
+library(MASS)
+library(scales)
+```
+
+
+## Introduction (5 min)
+
+**Business Context.** Real estate markets can sometimes be irrational, and buying a house can certainly be an emotional and highly psychological process. For example, the asking price can [“anchor”](https://en.wikipedia.org/wiki/Anchoring) the negotiations, and it can be very hard as a buyer to “forget” that initial number.
+
+You are a property developer who frequently buys properties. It would be very useful to get a fair estimate of the price of a property before seeing the asking price, based on features like its size and location. Besides making you a more informed buyer, having a pricing model could have multiple uses, such as automatically detecting under-priced properties that come on the market, or estimating the value added to a property if it was extended, divided into apartments, or converted into offices.
+
+**Business Problem.** Your task is to **build a model to predict property prices in the city of Milwaukee, Wisconsin**.
+
+## Data exploration
+
+Let's start by taking a look at the available features:
+
+1. **PropType**: the property category (“Commercial”, “Residential”, “Lg Apartment”, “Vacant Land”, or “Condominium”)
+2. **Taxkey**: a unique identifier for the property
+3. **Address**: the street address of the property
+4. **CondoProject**: for condominiums, the name of the project
+5. **District**: integer between 1 and 15 identifying the city district
+6. **Nbhd**: integer identifying one of 591 neighborhoods
+7. **Style**: information about the building architectural style, commerical use or type of building
+8. **Extwall**: type of exterior wall (e.g. “Brick”)
+9. **Stories**: number of stories
+10. **Year_Built**: the year the building was built
+11. **Nr_of_rms**: number of rooms
+12. **Fin_sqft**: finished square feet
+13. **Units**: number of units (e.g. apartments) in the building
+14. **Bdrms**: number of bedrooms
+15. **Fbath**: number of full bathrooms
+16. **Hbath**: number of half bathrooms
+17. **Lotsize**: size of the lot in square feet
+18. **Sale_date**: the date of the sale in YYYY-MM-DD format
+19. **Sale_price**: sale price in US dollars
+
+
+```{r}
+data <- read.csv("2002-2018-property-sales-data.csv", header=TRUE)
+data$Sale_date <- parse_date(data$Sale_date, format="%Y-%m")
+head(data)
+```
+
+Some tips:
+1. For the sake of removing potential confounding factors from consideration, focus on residential properties only (commercial properties are subject to all sorts of economic and market forces that residential properties are not). Also feel free to filter out other variables
+too (such as properties only above year 1800 etc).
+2. Pay attention to missing values. Sometimes missing numbers are entered as zeros, which can mess up the analysis (see `Lotsize` below as an example). Before proceeding, remove rows with zeros in `Year_Built`, `Fin_sqft`, `Lotsize`, and `Sale_price`, as these are the numerical variables where erroneous zero values can skew the distribution.
+
+
+Exploratory analysis:
+Start by filtering out the Commercial properties from the dataset.
+```{r}
+data2<-data%>%filter(PropType!="Commercial")
+head(data2)
+summary(data2)
+
+#Removing missing values in Year_Build, Fin_sqft, Lotsize, and Sale_price:
+data2<-data2%>%filter(Year_Built!=0 & Fin_sqft!=0 & Lotsize!=0 & Sale_price!=0)
+```
+There is an issue with Nr_of_rooms which now after filtering is zero for the remaining data. We will go ahead and exclude the table from further analysis. We will also exclude CondoProject from further analysis since it is simply the name of condo projects:
+```{r}
+
+data2<-data2[,-c(4,11)]
+head(data2)
+
+#looking for NA values
+sum(is.na(data2))
+
+```
+
+Exploratory data analysis:
+1. Looking at the relationship between squared feet and the sale price:
+```{r}
+finSqft_price<-ggplot(data2,aes(Fin_sqft,Sale_price))+geom_point()
+ggsave("finsqftPrice.png",finSqft_price)
+finSqft_price
+#there is a wide range for both price and squared feet so we log transform both variables so we have a more meaningful visual of the relationship:
+log_finSqft_price<-ggplot(data2,aes(log(Fin_sqft),log(Sale_price)))+geom_point()
+ggsave("logfinsqftPrice.png",log_finSqft_price)
+log_finSqft_price
+```
+
+Exploring a few more relationships; first, bedrooms and the log of sale price. Notice there is a property with 2031 bedrooms. We look into that specific case since we suspect it is a data error. The specific property is a cottage built in 1884 and 1609 squared feet. Since it is not likely this property actually has 2031 bedrooms, we will eliminate it from further analysis:
+
+```{r}
+bed_price<-ggplot(data2,aes(factor(Bdrms),log(Sale_price), fill=factor(Bdrms)))+geom_boxplot()
+ggsave("bedprice.png",bed_price)
+bed_price
+data2[data2$Bdrms==2031,]
+data2<-data2%>%filter(Bdrms!=2031)
+max(data2$Bdrms)
+bed_price_after<-ggplot(data2,aes(factor(Bdrms),log(Sale_price), fill=factor(Bdrms)))+geom_boxplot()
+ggsave("bedpriceafter.png",bed_price_after)
+bath_price<-ggplot(data2,aes(factor(Fbath),log(Sale_price),fill = factor(Fbath)))+geom_boxplot()
+ggsave("bathprice.png",bath_price)
+bath_price
+```
+It looks like zero bedrooms/bathrooms, which we first assumed to be studios have higher prices than one bedrooms/bath. This is interesting and it might be correlated to more expensive neighborhoods which tend to have smaller apartments (i.e.: New York City). We look into it next.
+
+Looking at districts and how their price might vary. Since there are too many neighborhoods, we will use district instead as a measure of how location impacts the price:
+```{r}
+district<-ggplot(data2,aes(factor(District),log(Sale_price),fill=factor(District)))+geom_boxplot()
+ggsave("district.png",district)
+district
+
+```
+Now, we want to further investigate the bedrooms with zero in them and see if this is a data error or inherent to the data (like what we suggested about studio apartments). We check the distribution of prices by neighborhood for all homes with bedrooms and bathroooms equaling zero.
+```{r}
+datazero<-data2%>%filter(Bdrms==0)
+nrow(datazero)
+
+ggplot(datazero,aes(factor(District),log(Sale_price),fill=factor(District)))+geom_boxplot()
+
+```
+The prices are higher for these as we saw previously in the first boxplot by neighborhood. Looking at the Style column below, we see that the zero is because these are apartment complexes with lots of bedrooms in each. The descriptions of the style clearly indicates the number of bedrooms in each complex. There are only 15 in the set that are not type "Lg Aparment":
+
+```{r}
+unique(datazero$PropType)
+test<-datazero%>%filter(PropType!="Lg Apartment")
+test
+```
+The issue with these 15 rows is something else. For now, we will further filter out the datazero dataset to include only Lg Apartments type so we can do string manipulation and get an estimate of the number of bedroom units in each:
+
+
+```{r}
+datazero<-datazero%>%filter(PropType=="Lg Apartment")
+head(datazero$Style)
+```
+Here we see the number of apartments in these units can be estimated by doing a string manipulation and taking the number character between the colon. For instance, "Apartment: 48: 1-Br Units". We acknowledge there might be some issues with that, but for estimation, we believe it is a good way to approximately estimate these numbers. 
+
+Below is the string manipulation to try to fill the number of bedrooms:
+
+```{r}
+#":[^:]\\s*(..)\\s*:[^:]"
+vector<-c(datazero$Style)
+
+r<-regexpr(":\\s*(..)\\s*:",vector)
+out<-rep(NA,length(vector))
+out[r!=-1]<-regmatches(vector,r)
+head(out,15)
+
+out2<-as.data.frame(out)
+head(out2,10)
+
+#going through the dataframe out2, substringing characters into integers and appending.
+#Moreover, if there was no pattern matched previously, then it is NA; we append with NA value.
+
+nb_Bedrooms<-c()
+for(i in 1:nrow(out2)){
+  if(is.na(out2[i,"out"])){
+    nb_Bedrooms<-append(nb_Bedrooms,NA)
+  } else if(is.character(out2[i,"out"])){
+    string<-out2[i,"out"]
+    number<-as.integer(substr(string,start = 2,stop = (nchar(out2[i,"out"])-1)))
+    nb_Bedrooms<-append(nb_Bedrooms,number)
+  }
+}
+nb_Bedrooms_df<-as.data.frame(nb_Bedrooms)
+
+#binding it back to the datazero and turning it into datazero2:
+datazero2<-cbind(datazero,nb_Bedrooms)
+
+```
+Now that we have a last table with what is the correct number of bedrooms in the houses, we will re-arrange the tables and join it with previous data2 dataset:
+```{r}
+
+datazero3<-datazero2%>%relocate(nb_Bedrooms, .after=Bdrms)
+head(datazero3)
+datazero3<-datazero3[,-c(12)]
+head(datazero3)
+
+#mutate nb_Bedrooms to be same name as dropped column:
+
+datazero3<-datazero3%>%rename(Bdrms = nb_Bedrooms)
+head(datazero3)
+
+#now we filter out the data with zeros from the data2:
+data2<-data2%>%filter(PropType!="Lg Apartment" & Bdrms!=0)
+
+data3<-rbind(data2,datazero3,test)
+
+#checking if all rows are correct:
+nrow(data3)==nrow(data2)+nrow(datazero3)+nrow(test)
+#data3 is the final data to be used:
+head(data3)
+```
+
+
+Now we recheck the visualizations for bedrooms to see what has changed:
+```{r}
+
+data3%>%ggplot(aes(factor(Bdrms),log(Sale_price),fill=factor(Bdrms)))+geom_boxplot()+theme(legend.position = "none")
+```
+We have the issue of the N/A data in bedrooms. I will use mice package to make the imputations.
+```{r}
+#imputing with mice:
+library(mice)
+imputed_data3<-mice(data3,method = "cart",where = is.na(data3))
+imput1<-xyplot(imputed_data3, Bdrms ~ log(Sale_price))
+print(imput1)
+imput2<-densityplot(imputed_data3, ~ Bdrms)
+png("imput2.png")
+imput2
+
+#the imputed data seems to follow the same pattern for not imputed data. We therefore will keep it:
+data3_complete<-complete(imputed_data3)
+
+#confirming no NAs:
+sum(sapply(data3_complete, function(x) { sum(is.na(x)) }))
+
+```
+Lastly, we exclude the the Bdrms == 0 (the same as the dataset test) data for two reasons:
+1. Seven of the observations are commercial. As mentioned prior, we should not explore these since there are other market forces in play.
+2. The remaining observations is only a tiny part of the dataset and therefore should not influence the modeling we will be doing next.
+
+
+
+Now, redoing the visualization for bedrooms and price done earlier
+```{r}
+test
+data3_complete<-data3_complete%>%filter(Bdrms!=0)
+data3_complete%>%ggplot(aes(factor(Bdrms),log(Sale_price),fill=factor(Bdrms)))+geom_boxplot()+theme(legend.position = "none")
+```
