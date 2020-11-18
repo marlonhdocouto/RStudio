@@ -1,0 +1,346 @@
+---
+title: "Mortgage Project"
+author: "Marlon Do Couto"
+date: "11/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Downloading relevant libraries:
+
+```{r}
+library(dplyr)
+library(ggplot2) 
+library(tidyr) 
+library(readr)
+library(plyr)
+library(Hmisc)
+library(ggplot2)
+library(ggpubr)
+library(corrr)
+library(mice)
+```
+
+Looking at the data:
+```{r}
+mortgage<-read.csv("mortgage.csv")
+head(mortgage,5)
+summary(mortgage)
+```
+Through looking at the data, we realized there are differences between the interest at the time of the observation and interest at the time of origination, as expected. We therefore created a new column to see if the interest differential affect default rates:
+```{r}
+mortgage[,"interest_differential"]<-mortgage$interest_rate_time-mortgage$Interest_Rate_orig_time
+ggplot(mortgage, aes(interest_differential))+geom_histogram()+scale_y_continuous(trans = "log10")+facet_wrap(~status_time)
+max(mortgage$interest_differential)
+sum(is.na(mortgage))
+
+```
+
+Now, we will impute on the 270 N/A values using MICE:
+```{r}
+imputed_mortgage<-mice(mortgage, where = is.na(mortgage))
+imputed_mortgage
+mortgage<-complete(imputed_mortgage)
+sum(is.na(mortgage))
+
+```
+The data has 3 different types of statuses: 1 for default; 2 for payoff; 0 for nondefault/nonpayoff (which we assume are active mortgages). We will analyze only the payoff and default observations to have a better predictor of default/payoff:
+
+```{r}
+mortgage<-mortgage%>%filter(status_time!=0)
+head(mortgage)
+mortgage[mortgage$status_time==2,"status_time"]<-0
+unique(mortgage$status_time)
+nrow(mortgage)
+head(mortgage)
+```
+
+REtype_CO_orig_time: is it condominium?
+REtype_PU_orig_time: is it urban?
+REtype_SF_orig_time: single family home?
+investor_orig_time: investor borrower?
+
+We will do a contingency table to analyze the relationship between the four variables above:
+
+```{r}
+
+matrixmortgage<-as.matrix(cbind(mortgage$REtype_CO_orig_time, mortgage$REtype_PU_orig_time,mortgage$REtype_SF_orig_time,mortgage$investor_orig_time))
+head(matrixmortgage)
+colnames(matrixmortgage)<-c("condo","urban","singleFam","investBorrower")
+head(matrixmortgage)
+
+numcol<-ncol(matrixmortgage)
+labels<-c("condo","urban","singleFam","investBorrower")
+listpvals<-rep(0, numcol*(numcol-1)/2)
+listlabels<-rep("", numcol*(numcol-1)/2)
+k<-0
+for (i in 1:(numcol-1)){
+  for (j in (i+1):numcol){
+    k<-k+1
+    m00 <- sum( (matrixmortgage[,i] == 0) & (matrixmortgage[,j] == 0) ) 
+    m01 <- sum( (matrixmortgage[,i] == 0) & (matrixmortgage[,j] == 1) ) 
+    m10 <- sum( (matrixmortgage[,i] == 1) & (matrixmortgage[,j] == 0) ) 
+    m11 <- sum( (matrixmortgage[,i] == 1) & (matrixmortgage[,j] == 1) ) 
+    contingencymatrix <- as.table(rbind(c(m00, m01), c(m10, m11)))
+    listpvals[k]<-chisq.test(contingencymatrix)$p.value
+    listlabels[k]<-paste(labels[i],labels[j],sep = " and ")
+  }
+}
+
+chisquaretable<-as.data.frame(cbind(listlabels,listpvals))
+chisquaretable
+
+
+```
+
+The variables seem to be dependent given their low p-values. 
+Now running some correlations to learn more about how the variables affect the outcome:
+
+```{r}
+cor(mortgage$interest_differential,mortgage$status_time)
+cor(mortgage$REtype_CO_orig_time,mortgage$status_time)
+cor(mortgage$REtype_PU_orig_time,mortgage$status_time)
+cor(mortgage$REtype_SF_orig_time,mortgage$status_time)
+cor(mortgage$investor_orig_time,mortgage$status_time)
+```
+Now we re-run the histogram from earlier to analyze any correlations between interest differentials between payoff and default:
+
+
+```{r}
+int_dif_hist<-ggplot(mortgage, aes(interest_differential))+geom_histogram()+scale_y_log10()+facet_wrap(~status_time)+
+  labs(title="Interest Rate Differentials for Defaults(0) and Payoffs(1)",x="Interest Differential",y="Count")
+int_dif_hist
+ggsave("int_dif_hist.png",int_dif_hist)
+ggplot(mortgage, aes(interest_differential))+geom_density(aes(color=factor(status_time)))
+
+```
+
+Now looking at other variables such as balance at origin, FICO scores, LTV, and HPI at origin:
+
+```{r}
+g1<-ggplot(mortgage, aes(log(balance_orig_time)))+geom_histogram(bins=80)+labs(title = "Histogram of balance_orig_time") + theme(plot.title = element_text(hjust = 0.5))
+g2<-ggplot(mortgage, aes(FICO_orig_time))+geom_histogram(bins=50)+labs(title = "Histogram of FICO_orig_time") + theme(plot.title = element_text(hjust = 0.5))
+g3<-ggplot(mortgage, aes(log(LTV_orig_time)))+geom_histogram(bins=20)+labs(title = "Histogram of LTV_orig_time") + theme(plot.title = element_text(hjust = 0.5))
+g4<-ggplot(mortgage, aes(Interest_Rate_orig_time))+geom_histogram(bins=50)+labs(title = "Histogram of Interest_Rate_orig_time") + theme(plot.title = element_text(hjust = 0.5))
+g5<-ggplot(mortgage, aes(hpi_orig_time))+geom_histogram(bins=10)+labs(title = "Histogram of hpi_orig_time") + theme(plot.title = element_text(hjust = 0.5))
+
+ggarrange(g1, g2, g3, g4, g5, ncol=2, nrow = 3)
+```
+
+Now we look at default time and payoff time to see if there is any information we can gain from the variables. After that, we try a first simple logit regression with all variables to have an idea about the model. 
+
+```{r}
+
+ggplot(mortgage,aes(default_time))+geom_histogram(bins=3,fill='darkred')
+ggplot(mortgage,aes(payoff_time))+geom_histogram(bins=3,fill='darkred')
+
+#Initial logistic regression model
+model_first <- glm(status_time ~ time+orig_time+first_time+mat_time+balance_time+LTV_time+interest_rate_time+ hpi_time+gdp_time+uer_time+REtype_CO_orig_time+REtype_PU_orig_time+REtype_SF_orig_time+investor_orig_time+balance_orig_time+FICO_orig_time+LTV_orig_time+hpi_orig_time+Interest_Rate_orig_time+default_time+payoff_time+interest_differential, data = mortgage, family="binomial")
+
+summary(model_first)
+
+Rsquared<-1-model_first$deviance/model_first$null.deviance
+Rsquared
+```
+
+Now that we have done explanatory analysis, we will start to build on our models. We first set up our train and test data based on a 80/20 convention. Our dataset is fairly balanced so no bootstrapping will be necessary before or after with the train data:
+
+```{r}
+#setting up train and test datasets:
+set.seed(123)
+
+mortgage$balance_time <- log(1+mortgage$balance_time)
+mortgage$interest_rate_time <- log(1+mortgage$interest_rate_time)
+mortgage$balance_orig_time <- log(1+mortgage$balance_orig_time)
+
+str(mortgage)
+
+train_samp <- sample(1:nrow(mortgage),floor(nrow(mortgage)*0.8),replace=FALSE)
+train <- mortgage[train_samp,]
+test <- mortgage[-train_samp,]
+
+
+#building the logit model:
+mylogit <- glm(status_time ~ time + orig_time + first_time + hpi_time + balance_time + LTV_time + interest_rate_time + balance_orig_time + mat_time + uer_time + gdp_time + FICO_orig_time + LTV_orig_time, data = train, family = "binomial")
+
+summary(mylogit)
+rsquared2<- 1-mylogit$deviance/mylogit$null.deviance
+rsquared2
+```
+
+
+Now we will analyze the logit model to check its accuracy:
+
+```{r}
+#After we created the model, we discovered the confidence interval using profiled log-likelihood. below is the table of confidence interval. 
+
+#confidence interval using profiled log-likelihood
+confint(mylogit)
+
+#to find odds ratios
+exp(coef(mylogit))
+
+prop.table(table(train$status_time)) 
+#baseline accuracy = 36.4% 
+
+#For train data
+PredTrain <- predict(mylogit, newdata = train, type = "response")
+
+#confusion matrix with threshold of 0.5,
+#meaning for probability predictions equal to or greater than 0.5, the algorithm will predict the Yes response for the status_time variable.
+table(train$status_time, PredTrain >= 0.5)
+
+(18379+7476)/nrow(train)  #accuracy - 77.4%
+
+#for test data
+PredTest <- predict(mylogit, newdata = test, type = "response")
+table(test$status_time, PredTest >= 0.5)
+
+
+```
+
+Now, we perform cross-validation to the model:
+
+```{r}
+
+#cross-validation
+ctrl <- trainControl(method = "repeatedcv", number = 10, savePredictions = TRUE)
+
+#transform status_time to factor to create the regression model. 
+mortgage2<-mortgage
+mortgage2$status_time = as.factor(mortgage2$status_time)
+
+mod_fit <- train(status_time ~ time + orig_time + first_time + hpi_time + balance_time + LTV_time + interest_rate_time + balance_orig_time + mat_time + uer_time + gdp_time + FICO_orig_time + LTV_orig_time, data = mortgage2, method = "glm", family = "binomial", trControl = ctrl, tuneLength = 5)
+
+
+pred <- predict(mod_fit, newdata = test)
+confusionMatrix(data=pred, as.factor(test$status_time))
+
+```
+
+The accuracy of the cross validated model improved to 78.1%
+
+Now, we will move to creating a random forest:
+
+```{r}
+library(randomForest)
+#install.packages('e1071')
+library(e1071)
+
+
+rf3 <- randomForest(as.factor(status_time) ~ time + orig_time + first_time + hpi_time + balance_time + LTV_time + interest_rate_time + mat_time + uer_time + gdp_time + FICO_orig_time + LTV_orig_time , data=train, ntree=500, importance= TRUE)
+rf3
+
+rf3.pred <- predict(rf3,test)
+confusionMatrix(as.factor(rf3.pred),as.factor(test$status_time),positive="1")
+
+
+```
+Now, we look into XGBoost to try other models to fit our dataset and solve our problem. This is the last model we will try before we start on evaluation of the models:
+```{r}
+#install.packages("xgboost")
+#install.packages("MLmetrics")
+library(xgboost)
+library(MLmetrics)
+library(Matrix)
+
+#removing the highly correlated variables default_time and payoff_time that are only known once there is default or payoff. Additionally we remove interest differential:
+#train2<-train[,-c(22,23,25)]
+#test2<-test[,-c(22,23,25)]
+
+train2<- train[,c(3:19,21,24)]
+test2 <- test[,c(3:19,21,24)]
+
+dtrain<-sparse.model.matrix(status_time~.,data = train2)
+dtest<-sparse.model.matrix(status_time~.,data=test2)
+
+
+xgb<-xgboost(data=dtrain,
+             label = train$status_time,
+             eta = 0.1,
+             max_depth =7,
+             nround=100,
+             print_every_n = 50,
+             subsample = 0.5,
+             colsample_bytree = 0.5,
+             eval_metric = "merror",
+             objective = "multi:softmax",
+             num_class = 2,
+             nthread = 3)
+ 
+#changing levels so that the confusionMatrix can be created:
+#test$status_time<-as.factor(test$status_time)
+
+# predict values in test set
+
+
+
+```
+Now, looking at the confusion matrices for the different models in order to check on their accuracy:
+
+```{r}
+#setting up the labels for the test as a factor so it is easier to use with the predict function:
+test_label<-as.factor(test$status_time)
+#test$status_time<-as.factor(test$status_time)
+
+#Logistic Regression:
+confusionMatrix(data=pred, as.factor(test$status_time), positive="1")
+
+
+#Random Forests:
+#rf3.pred <- predict(rf3,test,type = "response")
+confusionMatrix(as.factor(rf3.pred),as.factor(test$status_time),positive="1")
+
+
+#XGBoost:
+y_pred <- predict(xgb, dtest,type="response")
+y_pred<-ifelse(y_pred>=0.7,1,0)
+y_pred<-as.factor(y_pred)
+confusionMatrix(y_pred,test_label, positive="1")
+
+
+```
+
+Evaluating the models is next: I will do that through the ROC function for both logit regression and random forests:
+
+```{r}
+
+library(pROC)
+library(ROCR)
+#need to redo the pred with response to run ROC
+#pred <- predict(mod_fit, newdata = test, type="prob")
+predictionlogit<-prediction(as.numeric(pred), test$status_time)
+performancelogit<-performance(predictionlogit,measure="tpr",x.measure="fpr")
+plot(performancelogit,main="ROC for Logistical Regression")
+
+AUClogit<-performance(predictionlogit,measure="auc")
+AUClogit<-AUClogit@y.values[[1]]
+
+
+probrandom<-as.numeric(rf3.pred)
+predictionrandom<-prediction(probrandom,test$status_time)
+performancerandom<-performance(predictionrandom,measure = "tpr",x.measure = "fpr")
+plot(performancerandom,main="ROC for Random Forests")
+
+AUCrandom<-performance(predictionrandom,measure = "auc")
+AUCrandom<-AUCrandom@y.values[[1]]
+
+
+xgb_pred<-prediction(as.numeric(predict(xgb, dtest,type="response")),test_label)
+xgb_perf<-performance(xgb_pred,"tpr","fpr")
+plot(xgb_perf,main="ROC for XGBoost")
+
+xgb.prob<-predict(xgb, dtest,type="prob")
+xgb.ROC<-roc(predictor=xgb.prob,response=as.factor(test$status_time),levels=rev(levels(as.factor(test$status_time))))
+
+AUClogit
+AUCrandom
+xgb.ROC$auc
+
+
+
+```
+
