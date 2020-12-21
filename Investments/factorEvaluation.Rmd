@@ -1,0 +1,381 @@
+---
+title: "Factor Models"
+author: "Marlon Do Couto"
+date: "12/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+In this case study, I analyze and interpret the efficiency of different portfolios constructed through different allocation strategies. I then analyze the impact of factors on excess returns of these portfolios. The objective is to see how the factor anomalies help explain some of these excess returns. 
+
+Lastly, I analyze the data for Berkshire Hathaway to see the impact of the factors on its returns and how efficiently their allocation strategy is. 
+
+```
+A bit about the data in the workspace.
+- **dt1** contains the information for a market cap weighted index, an equal weighted index, an inverse volatility index, the minimum variance index, and a fundamental composite which averages the weights for four indices. It has also information on the risk premium, SMB, HML, MOM strategies and the risk free rate.
+-**dt2** contains information on returns for *Berkshire Hathaway (BRK.A)* along with the same strategy returns for the period.
+-**dt3** contains information on BRK.A along with funds on the S&P500, small cap stocks, and value stocks.
+```
+
+```{r}
+load("data_2.RData")
+head(dt1)
+head(dt2)
+head(dt3)
+```
+
+
+Computing the mean net of the risk free rate (excess returns), standard deviation in **annualized terms** for the strategies in **dt1**:
+
+```
+I divide the columns by nonfactor strategies (nfs) and factor strategies (fs).
+```
+
+```{r}
+nfs<-dt1[,1:5]
+fs<-dt1[,6:9]
+rf<-dt1[,10]
+nfs.means<-colMeans(nfs - rf) *12
+nfs.sd<-apply(nfs,2,sd) * sqrt(12)
+nfs.sharpe<-nfs.means/nfs.sd
+
+nfs.means
+nfs.sd
+nfs.sharpe
+```
+
+
+The minimum variance portfolio has the highest Sharpe ratio of the portfolios. This makes sense as this portfolio is quite close to the Maximal Sharpe Ratio (MSR) tangent portfolio in the efficient frontier. 
+
+Another interesting observation is the Inverse Volatility portfolio, which allocates based on low risk. This portfolio has the second highest SR, illustrating the higher excess returns per unit of risk from this strategy. This is an illustration of a study by Clifford S.Asness, Andrea Frazzini, and Lasse H. Pedersen (link: https://www.tandfonline.com/doi/abs/10.2469/faj.v68.n1.1) about the position of *unlevered risk parity* (RP) portfolios along the efficient frontier.
+
+
+Now, I run a regression for each non-factor strategy (nfs) on the Mkt.RF, the market risk premium factor. This is the traditional **Capital Asset Pricing Model**. From the regression, I will get the following information:
+
+- alpha (as a percentage)
+- beta
+- r-squared
+- t-statistic for alpha
+- t-statistic for beta
+
+```{r, message=FALSE, warning=FALSE}
+
+nfs.names<-colnames(nfs)
+CAPM<-NULL
+for(nfs.name in nfs.names){
+  lm1<-lm(unlist(nfs[nfs.name]-rf) ~ fs$Mkt.RF)
+  summary<-summary(lm1)
+  alpha_beta<-summary$coefficients[,"Estimate"]
+  error<-summary$coefficients[,"Std. Error"]
+  rsquared<-summary$r.squared
+  nullh<-c(0,1)
+  tstat<-(alpha_beta - nullh)/error
+  tobind<-c(alpha_beta,rsquared,tstat)
+  CAPM<-rbind(CAPM,tobind)
+  
+}
+colnames(CAPM)<-c("alpha","beta","r-squared","alphat","betat")
+rownames(CAPM)<-nfs.names
+CAPM<-as.data.frame(CAPM)
+CAPM$alpha<-paste(round(CAPM$alpha*100,4),'%')
+CAPM
+
+```
+Here, we can see that a simple one factor model explains a lot of the excess returns for both equally weighted, inverse volatility, and fundamental composite portfolios. The alpha for most portfolios, with the exception of the equally weighted one, are different from zero.
+
+Next, I compute the **idiosyncratic** variance and **systematic** variance for the portfolio. The systematic variance corresponds to the R-squared calculated in the regression and, therefore, by subtracting it from one, we get to the idiosyncratic variance:
+
+```{r}
+sys<-CAPM$`r-squared`
+idio<-1-sys
+total.stats<-data.frame(nfs.means,nfs.sd,nfs.sharpe,sys,idio)
+colnames(total.stats)<-c("Mean","St.Dev","Sharpe","Syst.Risk","Idio.Risk")
+round(total.stats*100,3)
+```
+The **market cap portfolio** (S&P 500) shows the effect of diversification in the strategy. All idiosyncratic risk has been eliminated and the portfolio contains 100% systematic risk. An equally weighted strategy and fundamental composite strategy are also effective in eliminating idiosyncratic risk. 
+
+Next, I run a regression to add the other three factors: **SML**, small minus large, **HML**, value minus growth, and **MOM**,losers minus winners (momentum). As in the previous regression, I will collect the following information:
+
+- alpha (as a percentage)
+- beta
+- r-squared
+- t-statistic for alpha
+- t-statistic for beta
+
+```{r, warning=FALSE,message=FALSE}
+
+FFmodel<-NULL
+
+for (nfs.name in nfs.names){
+  lm1<-lm(unlist(nfs[nfs.name]- rf) ~ fs$Mkt.RF + fs$SMB + fs$HML + fs$MOM)
+  summary<-summary(lm1)
+  alpha_beta<-summary$coefficients[,"Estimate"]
+  error<-summary$coefficients[,"Std. Error"]
+  rsquared<-summary$r.squared
+  nullh<-c(0,1,0,0,0)
+  tstat<-(alpha_beta-nullh)/error
+  tobind<-c(alpha_beta,rsquared,tstat)
+  FFmodel<-rbind(FFmodel,tobind)
+}
+
+colnames(FFmodel)<-c("alpha","betaMkt.RF","betaSMB","betaHML","betaMOM","rsquared",
+                     "alpha.t","Mkt.RF.t","SML.t","HML.t","MOM.t")
+rownames(FFmodel)<-nfs.names
+FFmodel<-as.data.frame(FFmodel)
+FFmodel$alpha<-paste(round(FFmodel$alpha*100,4),'%')
+FFmodel
+
+```
+There are some interesting findings here. The highest alphas are achieved by the lowest *risk-premium beta* (Mkt.RF), signaling the stocks in the portfolio might be under-priced. The beta for the other factors are small, but they might indicate whether a fund has a prevalence of large cap or value stocks. For instance, the MVP portfolio's SMB beta of -0.00398 while very close to zero might indicate the strategy is slightly more weighted towards large caps. Meanwhile, its HML beta of -0.44287 indicates a prevalence of value stocks in the strategy.
+
+The r-squared improves significantly across the portfolios, signaling that the factors combined are more predictive and explanatory of the strategy here. 
+
+Next, I will run a regression for all four factors and the excess returns of **Berkshire Hathaway (BRK.A)**. With this analysis, I will see whether the Berkshire is generating excess performance on top of the factor anomalies analyzed here. For this specific part, I will be using the **dt2** file and running three regressions:
+
+- For the full set with monthly returns from 1980 - 2013. 
+- For a subset running from April 1980 to December 2007.
+- For a subset running from January 2008 to December 2013.
+
+
+The output for the analysis will again include the same outputs as in the previous regressions:
+
+- alpha (as a percentage)
+- beta
+- r-squared
+- t-statistic for alpha
+- t-statistic for beta
+
+```
+The row indices below correspond to the following:
+- 1:333, subset Apr 1980 through Dec 2007
+- 334:N, subset Jan 2008 through Dec 2013
+
+```
+Lastly, I also calculate the Sharpe ratio for Berkshire and the market value weighted index for the full period. 
+
+
+```{r}
+brk2<-dt2[1:333,]
+brk3<-dt2[334:405,]
+
+lm.full<-lm((dt2$Berkshire.Hathaway.A - dt2$RF) ~ dt2$Mkt.RF + dt2$SMB + dt2$HML + dt2$MOM)
+summary.full<-summary(lm.full)
+alpha_beta.full<-summary.full$coefficients[,"Estimate"]
+error.full<-summary.full$coefficients[,"Std. Error"]
+rsquared.full<-summary.full$r.squared
+nullh.full<-c(0,1,0,0,0)
+tstat.full<-(alpha_beta.full - nullh.full)/error.full
+tobind.full<-c(alpha_beta.full,rsquared.full,tstat.full)
+
+lm.brk2<-lm((brk2$Berkshire.Hathaway.A - brk2$RF) ~ brk2$Mkt.RF + brk2$SMB + brk2$HML + brk2$MOM)
+summary.brk2<-summary(lm.brk2)
+alpha_beta.brk2<-summary.brk2$coefficients[,"Estimate"]
+error.brk2<-summary.brk2$coefficients[,"Std. Error"]
+rsquared.brk2<-summary.brk2$r.squared
+nullh.brk2<-c(0,1,0,0,0)
+tstat.brk2<-(alpha_beta.brk2 - nullh.brk2)/error.brk2
+tobind.brk2<-c(alpha_beta.brk2,rsquared.brk2,tstat.brk2)
+
+lm.brk3<-lm((brk3$Berkshire.Hathaway.A - brk3$RF) ~ brk3$Mkt.RF + brk3$SMB + brk3$HML + brk3$MOM)
+summary.brk3<-summary(lm.brk3)
+alpha_beta.brk3<-summary.brk3$coefficients[,"Estimate"]
+error.brk3<-summary.brk3$coefficients[,"Std. Error"]
+rsquared.brk3<-summary.brk3$r.squared
+nullh.brk3<-c(0,1,0,0,0)
+tstat.brk3<-(alpha_beta.brk3 - nullh.brk3)/error.brk3
+tobind.brk3<-c(alpha_beta.brk3,rsquared.brk3,tstat.brk3)
+
+berkshire.results<-rbind(tobind.full,tobind.brk2,tobind.brk3)
+colnames(berkshire.results)<-c("alpha","betaMkt.RF","betaSMB","betaHML","betaMOM","rsquared",
+                     "alpha.t","Mkt.RF.t","SML.t","HML.t","MOM.t")
+rownames(berkshire.results)<-c("full set","1980-2007","2008-2013")
+berkshire.results<-as.data.frame(berkshire.results)
+berkshire.results$alpha<-paste(round(berkshire.results$alpha*100,3),'%')
+
+
+berkshire.means<-mean(dt2$Berkshire.Hathaway.A - dt2$RF) * 12
+berkshire.sd<-sd(dt2$Berkshire.Hathaway.A) * sqrt(12)
+berkshire.sharpe<-berkshire.means/berkshire.sd
+brk<-cbind(berkshire.means,berkshire.sd,berkshire.sharpe)
+
+value.means<-mean(dt2$Mkt.RF) * 12
+value.sd<-sd(dt2$Mkt.RF) * sqrt(12)
+value.sharpe<-value.means/value.sd
+value<-cbind(value.means,value.sd,value.sharpe)
+
+fullmetrics<-rbind(brk,value)
+colnames(fullmetrics)<-c("mean","sd","Sharpe")
+rownames(fullmetrics)<-c("BRK","value")
+
+berkshire.results
+fullmetrics
+
+
+```
+Here we see some interesting things. The alpha for the full set is almost 1%. The one for the 2008-2013 is not statistically significant from zero. The strategy of buying value companies is also reflected on the **HML** beta, all of which are positive - though not as strong as the market premium betas (the exception being the 2008-2013 set). Note also the t-statistic for the HML beta for the *1980-2007* set which is very significant and it shows that the company took significant advantage from this strategy for that period of growth in the U.S. economy (as also seen in the Mkt.RF beta).
+
+The r-squared for all three sets is low in comparison to what we analyzed earlier for other investment strategies. This points out to these four factors not fully explaining returns for BRK.A and other factors in play and responsible for the significant alphas - at least for the full set and for 1980 - 2007 sets. 
+
+Also notice the difference in mean returns, standard deviation and Sharpe ratio of BRK.A in comparison to the value index. It seems like BRK.A investment strategy is paying off better than other value based strategies in the market. 
+
+For the last analysis in the case study, I try to create a benchmark for the Berkshire returns from 1993 through 2013.For the benchmark, I will use three funds:
+
+- **VFINX**: large stock fund
+- **NAEX**: small cap fund
+- **VIVAX**: value stocks fund
+
+I will use look at two methods:
+
+- Running a new regression to predict BRK.A returns according to teh returns on the three funds, and
+- A portfolio analytics library to optmize the portfolio to get to same returns as the returns by Berkshire for the period.
+
+```
+Data for this part is in **dt3** file;
+It contains monthly returns for BRK.A, VFINX,NAEX,and VIVAX
+from April 1993 through December 2013.
+
+We do not have information about risk-free asset in the dataset
+so we assume it isn't available for the investor.
+
+```
+```
+Libraries needed:
+
+library(PortfolioAnalytics)
+library(ROI)
+library(ROI.plugin.glpk)
+library(ROI.plugin.quadprog)
+
+```
+After computing weights for the benchmark, I compute the mean active returns and tracking error for the benchmark.
+
+```{r,warning=FALSE, message=FALSE}
+
+allocation<-lm(dt3$BRK.A ~ dt3$Vanguard.S.P.500.Index.Inv..VFINX. + dt3$Vanguard.Small.Cap.Index.Inv..NAESX. + dt3$Vanguard.Value.Index.Inv..VIVAX.)
+summary3<-summary(allocation)
+summary3
+
+```
+The low beta for the small cap strategy indicates that the fund might be under-priced. We can take advantage of that in creating a benchmark. The same is true for the VFINX, the large cap index.
+
+```
+The rownames in **dt3** need to be changed
+to fit the package specifications for time series
+
+Libraries used:
+library(stringr)
+
+```
+A few things to point out as I run the optimizer:
+
+- I have restricted the portfolio for **full investment** and a **long only** strategy.
+- To construct a benchmark, I am adding as targets **return** and **risk** that emulate BRK.A portfolio.
+
+
+```{r,warning=FALSE,message=FALSE}
+library(stringr)
+library(PortfolioAnalytics)
+library(ROI)
+library(ROI.plugin.glpk)
+library(ROI.plugin.quadprog)
+brk.only<-dt3$BRK.A
+indices.only<-dt3[,2:4]
+
+rows.names<-rownames(indices.only)
+year.names<-str_sub(rows.names,-4,-1)
+month.names<-str_extract(rows.names,"[^/]+")
+series<-paste0(year.names,'-',month.names,'-1')
+timeseries<-as.Date(series,"%Y-%m-%d")
+rownames(indices.only)<-timeseries
+
+set.seed(1234)
+init.port<-portfolio.spec(assets=colnames(indices.only))
+init.port<-add.constraint(portfolio = init.port,type = "full_invesment")
+init.port<-add.constraint(portfolio = init.port,type="long_only")
+init.port<-add.constraint(portfolio = init.port,type = "return",return_target=0.01)
+objective.port<-add.objective(portfolio = init.port,type = "return",name = "mean",target=0.01)
+objective.port<-add.objective(portfolio = objective.port,type = "risk",name = "StdDev",target=0.061)
+
+rp<-random_portfolios(init.port,2000,"sample")
+optim<-optimize.portfolio(R=indices.only,portfolio = objective.port,optimize_method = "random",rp=rp,trace = TRUE)
+optim
+chart.RiskReward(optim,risk.col = "StdDev",return.col = "mean",main="Optimal Benchmark for BRK.A")
+
+```
+
+
+
+
+The optimizer points out to what we noticed in the regression: the NAESX will be our largest weight at 95.6%. The weightings do not fully match the returns and risk achieved by BRK.A though and we should see that once we run the tracking error.
+
+Now, I need to calculate the **tracking error** for the benchmark at the end of the full period. To do this, I will:
+
+- reiterate through all rows and columns in the **indices.only** table to calculate monthly returns for this benchmark;
+- multiply each by their suggested weight from the optimization above;
+- add the results at the end of the row
+
+At the end, the mean and standard deviation of the calculation should be the same as the one provided above by the optimizer.
+
+```{r}
+
+weights<-c(0.026,0.956,0.018)
+benchmark.returns<-c()
+returns<-0
+
+for (i in 1:nrow(indices.only)){
+  
+  for (j in 1:ncol(indices.only)){
+  
+    return1<-indices.only[i,j]*weights[j]
+    returns<-returns+return1
+  }
+  benchmark.returns<-append(benchmark.returns,returns)
+  returns<-0
+}
+
+tracking.error<-sd(brk.only - benchmark.returns)
+tracking.error
+sd(benchmark.returns)
+mean(benchmark.returns)
+```
+- Tracking error equals **0.0731**
+- Mean equals **0.00981**, the same as the one shown by the optimizer
+- Standard deviation equals **0.0549**, also the same as the one shown by the optimizer.
+
+Before trying to improve on the tracking error, I do the same calculation for a subset for *January 2008* through *December 2013*:
+
+```
+Row 178 is the row for January 2008
+
+```
+
+```{r}
+brk.subset<-brk.only[178:249]
+indices.subset<-indices.only[178:249,]
+
+benchmark.subset.returns<-c()
+subset.returns<-0
+
+for (i in 1:nrow(indices.subset)){
+  for (j in 1:ncol(indices.subset)){
+    subset.return1<-indices.subset[i,j]*weights[j]
+    subset.returns<-subset.returns+subset.return1
+  }
+  benchmark.subset.returns<-append(benchmark.subset.returns,subset.returns)
+  subset.returns<-0
+}
+
+subset.tracking.error<-sd(brk.subset - benchmark.subset.returns)
+subset.tracking.error
+sd(benchmark.subset.returns)
+sd(brk.subset)
+mean(benchmark.subset.returns)
+mean(brk.subset)
+```
+Here, the tracking error is lower at **6.27%** and both the returns and standard deviation of the benchmark for the period are higher than those of BRK.A. If the goal is to minimize the tracking error, the investor can play with the weights of the three funds in order to minimize it. For instance, by applying a **1/N** allocation strategy, I was able to reduce the error slightly to 6.22%. The returns and standard deviation were also minimized, though. Additionally, by allocating more to the VFINX and VIVAX, I was able to get to a tracking error of **5.9%**. Such portfolios returns are over 0.1% lower than BRK.A on a monthly basis.  
+
+In summary, this case study provided a way to analyze the impact of factors in different portfolio allocation strategies such as the market cap portfolio, an inverse volatility portfolio, etc. By adding factors on top of the CAPM traditional risk premium, one can increase the r-square, and have a greater understanding of the anomalies impacting their returns. Lastly, I analyzed the returns produced by Berkshire Hathaway (BRK.A) in comparison to other value-based strategies and analyzed the impact of the factor anomalies in its returns.
+
