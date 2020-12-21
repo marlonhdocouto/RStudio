@@ -1,0 +1,296 @@
+---
+title: "Portfolio Allocation"
+author: "Marlon Do Couto"
+date: "12/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Here I use **PortfolioAnalytics** package to find optimal portfolio according to Sharpe but also with random methods included in the package.
+
+https://cran.r-project.org/web/packages/PortfolioAnalytics/PortfolioAnalytics.pdf
+check Github for reference: https://github.com/R-Finance/PortfolioAnalytics/blob/master/demo/demo_max_Sharpe.R
+
+
+The goal of the case study is to find the optimal allocation of risky assets for a *Maximum Sharpe Ratio (MSR)* portfolio and a *Global Minimum Variance (GMV)* portfolio. Five other portfolios are created in combination with the T-bill, our risk-free asset, according to their risk-aversion. 
+
+```{r, message=FALSE}
+
+data<-get(load("C:/Users/marlo/OneDrive/Desktop/MQM BA/Fall 2/IntermediateFinance/CaseOne/A.RData"))
+head(data,20)
+
+means<-c()
+st.devs<-c()
+for (i in 2:ncol(data)){
+  
+  mean<-mean(data[,i])   
+  stdv<-sd(data[,i])
+  geom_mean<-(mean - (0.5*(stdv^2)))*12*100
+  stdv_an<-stdv*sqrt(12)*100
+  means<-append(means,geom_mean)
+  st.devs<-append(st.devs,stdv_an)
+  
+}
+
+results<-cbind(means,st.devs)
+rownames(results)<-c("Stocks","Bonds","Gold","Commodities","Tbill","Inflation")
+results
+```
+
+
+
+Now, I find the **correlation** and **co-variance** of the assets and put the results into a matrix in order to understand the diversifying benefits of the asset classes:
+
+```{r}
+cors<-c()
+vars<-c()
+for (i in 2:ncol(data)){
+  for (j in 2:ncol(data)){
+    correlation<-cor(data[,i],data[,j]) 
+    variance<-correlation*sd(data[,i])*sd(data[,j]) 
+    cors<-append(cors,correlation)
+    vars<-append(vars,variance)
+  }
+}
+cors
+vars
+```
+
+Calculating only the correlation and co-variances for the basket of **risky** assets and taking out inflation and T-BILL:
+
+```{r}
+cors<-matrix(cors,ncol=6)
+cors<-as.data.frame(cors)
+colnames(cors)<-c("Stocks","Bonds","Gold","Commodities","Tbill","Inflation")
+rownames(cors)<-c("Stocks","Bonds","Gold","Commodities","Tbill","Inflation")
+
+vars<-matrix(vars,ncol=6)
+vars<-as.data.frame(vars)
+colnames(vars)<-c("Stocks","Bonds","Gold","Commodities","Tbill","Inflation")
+rownames(vars)<-c("Stocks","Bonds","Gold","Commodities","Tbill","Inflation")
+
+riskycors<-cors[c(1,2,3,4),-c(5,6)]
+riskyvars<-vars[c(1,2,3,4),-c(5,6)]
+
+cors
+vars
+riskycors
+riskyvars
+
+```
+
+
+Given the above observations, we see that there are potential benefits for diversifying across these asset classes. The correlations are low among them. 
+
+Therefore, the next step is to find the optimization of the portfolio in a couple of different ways: first, finding the *MSR* through the *ROI* optimization method and then through a random method in which many iterations are tried in order to find the best portfolio according to the specifications.
+
+First though, we need to clean up the data to fit the requirements of the package. I add dates as rownames so that it becomes a time series.
+
+```{r, message=FALSE, warning=FALSE}
+library(PortfolioAnalytics)
+
+v<-data$YYMM
+t<-as.Date(paste(substr(v,1,4),substr(v,5,6),"01",sep = "-"))
+data$YYMM<-t
+rownames(data)<-data$YYMM
+
+data1<-data[,-1]
+datarisky<-data1[,1:4]
+head(datarisky)
+```
+
+Then, it is important to construct the portfolio according to constraints and specifications:
+
+- I initiate the portfolio with the risky assets. 
+- I add the constraints **full investment** and **no short sales** according to the requirements of the case. 
+- I add the objectives to maximize **returns** and minimize **risks**.
+
+```
+Other constraints and objectives can be added but these ones better matched the requirements of the case in study
+
+```
+
+After initializing the portfolio, I then run the **optimize portfolio** function with the goal of maximizing the Sharpe Ratio. The chart below is the efficient frontier. 
+
+```{r}
+tryout<-datarisky
+funds<-colnames(tryout)
+
+initial.port<-portfolio.spec(assets = funds)
+initial.port<-add.constraint(portfolio = initial.port,type = "full_investment")
+initial.port<-add.constraint(portfolio=initial.port,type="long_only") 
+initial.port<-add.objective(portfolio=initial.port,type = "return",name="mean") 
+initial.port<-add.objective(portfolio = initial.port,type = "risk",name = "StdDev") 
+```
+```{r, message=FALSE, warning=FALSE}
+maxSharpe<-optimize.portfolio(R=tryout,portfolio = initial.port,optimize_method = "ROI",maxSR=TRUE,trace = TRUE)
+maxSharpe
+chart.EF.Weights(maxSharpe)
+chart.RiskReward(maxSharpe,risk.col = "StdDev",return.col = "mean", main="MSR Portfolio")
+chart.EfficientFrontier(object=maxSharpe,match.col = "StdDev", n.portfolios=1000,rf=mean(data1$Tbill))
+```
+
+
+Now, I will try out another maximization method to see whether the Sharpe Ratio is higher. The method will reiterate through the different weights and try to find the best option to maximize returns and minimize risk as stipulated in the initial portfolio:
+
+
+```{r,message=FALSE, warning=FALSE}
+Optimized<-optimize.portfolio(R=tryout,portfolio = initial.port,optimize_method = "random", maxSR = TRUE,trace = TRUE)
+Optimized
+chart.RiskReward(Optimized,risk.col="StdDev",return.col="mean")
+chart.EF.Weights(object=Optimized,match.col = "StdDev")
+chart.EfficientFrontier(object=Optimized,match.col = "StdDev", n.portfolios=5000,rf=mean(data1$Tbill))
+
+```
+
+
+Optimized portfolio has a slightly lower SR than the previous one. I will keep the previous option and go forward with the weights provided by that one. 
+
+On top of the Maximal Sharpe Ratio (MSR) portfolio calculated before, I will create 6 additional portfolios with the risk-free rate and then create the GMV.
+
+2. Optimal portfolio with T-bill included and according to different aversions as mentioned in the case study:
+  Aversion 1: 1.3
+  Aversion 2: 2.8
+  Aversion 3: 6.5
+  Aversion 4: 10.5
+  Aversion 5: 16.9
+  
+To complete the process, I first get the return and variance of the risky portfolio and run according to the equation: 
+```
+(R_risky - R_riskfree)/(A*var_risky) 
+```
+
+
+
+```{r}
+
+i<-unlist(maxSharpe$objective_measures)
+ret_risky<-i[[2]]*12
+stdev_risky<-i[[1]]*(sqrt(12))
+var_risky<-stdev_risky^2
+ret_risk_free<-mean(data1$Tbill)*12
+
+
+av1<-1.3
+av2<-2.8
+av3<-6.5
+av4<-10.5
+av5<-16.9
+
+
+
+w1<-(ret_risky - ret_risk_free) / (av1*var_risky)
+w2<-(ret_risky - ret_risk_free) / (av2*var_risky)
+w3<-(ret_risky - ret_risk_free) / (av3*var_risky)
+w4<-(ret_risky - ret_risk_free) / (av4*var_risky)
+w5<-(ret_risky - ret_risk_free) / (av5*var_risky)
+
+w1
+w2
+w3
+w4
+w5
+```
+
+
+We see here the willingness to lever up on the risky portfolio according to the risk aversion. The investor with low aversion would be indifferent to the levering up and will be able to increase returns for doing that. A risk aversion of 10.4 would yield close to the traditional 60/40 portfolio. 
+
+3. Now, I create the Global mininum variance (GMV) portfolio:
+- Full invesment and no shorts
+- Objective is only to minimize risk
+
+
+```{r}
+minvar.port<-portfolio.spec(assets = funds)
+minvar.port<-add.constraint(portfolio = minvar.port,type = "full_investment") 
+minvar.port<-add.constraint(portfolio=minvar.port,type="long_only") 
+minvar.port<-add.objective(portfolio=minvar.port,type = "risk",name="var")
+
+opt_gmv<-optimize.portfolio(R=tryout,portfolio = minvar.port,optimize_method = "ROI",trace=TRUE)
+opt_gmv
+
+```
+
+
+The GMV has slightly lower standard deviation than the MSR portfolio as seen above. Now, calculating returns, risk and plotting the final results and plotting them so we can see the risk-return trade off among the different portfolios:
+
+```{r}
+
+port_one<-c(ret_risky,stdev_risky)
+
+
+port_two_ret<-(ret_risky*w1)+(ret_risk_free*(1-w1))
+port_two_st<-stdev_risky*w1
+port_two<-c(port_two_ret,port_two_st)
+
+port_three_ret<-(ret_risky*w2)+(ret_risk_free*(1-w2))
+port_three_st<-stdev_risky*w2
+port_three<-c(port_three_ret,port_three_st)
+
+port_four_ret<-(ret_risky*w3)+(ret_risk_free*(1-w3))
+port_four_st<-stdev_risky*w3
+port_four<-c(port_four_ret,port_four_st)
+
+port_five_ret<-(ret_risky*w4)+(ret_risk_free*(1-w4))
+port_five_st<-stdev_risky*w4
+port_five<-c(port_five_ret,port_five_st)
+
+port_six_ret<-(ret_risky*w5)+(ret_risk_free*(1-w5))
+port_six_st<-stdev_risky*w5
+port_six<-c(port_six_ret,port_six_st)
+
+j<-unlist(opt_gmv$objective_measures)
+port_seven_st<-j[[1]]*sqrt(12)
+
+weights<-unlist(opt_gmv$weights)
+port_seven_ret<-0
+for (i in 1:4){
+  return_7<-weights[[i]]*((results[i,"means"])/100)
+  port_seven_ret<-port_seven_ret+return_7
+}
+
+port_seven<-c(port_seven_ret,port_seven_st)
+
+
+full_return<-rbind(port_one,port_two,port_three,port_four,port_five,port_six,port_seven)
+full_return<-as.matrix(full_return)
+colnames(full_return)<-c("Mean","St.Dev")
+rownames(full_return)<-c("MSR","1.3","2.8","6.5","10.5","16.9","GMV")
+head(full_return)
+
+```
+
+
+Now, we have the returns and standard deviations of all the portfolios created so far. See the substantially higher returns for investors 1.3 and 2.8 who can lever up and therefore increase returns - but also risks. 
+
+For a visual of all portfolios, I will plot them together:
+
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(tidyr)
+library(dplyr)
+library(scales)
+full_return1<-as.data.frame(full_return)
+full_return1$Mean<-full_return1$Mean*100
+full_return1$St.Dev<-full_return1$St.Dev*100
+
+lines2<-full_return1%>%ggplot(aes(St.Dev,Mean))+geom_point(size=2)+
+  coord_trans(x="log",y="log")+
+  labs(title = "Returns and Risk for Seven Portfolios",y="Returns",x="Risk")+
+  theme(axis.line = element_line(linetype = "solid"))+
+  geom_text_repel(aes(label=rownames(full_return1)),size=3.5)+
+  annotate(geom = "text",x=40,y=25.5,label="Short T-bill",color="red")+
+  annotate(geom = "text",x=20,y=17.3,label="Short T-bill",color="red")
+lines2
+
+```
+
+This case highlights the trade offs in constructing an **optimal portfolio allocation**. Investors can benefit from asset classes/assets with low correlation to construct better diversified portfolios. 
+
+In this case, the optimal risky portfolio was taken as the **Maximal Sharpe Ratio (MSR)** portfolio. The allocation of funds between the risky and risk-free (T-Bill) asset is highly dependent on the risk aversion of the investor. The results highlight the trade offs in risk and returns and show that there is no free lunch in investing: levering up will also result in higher risk. 
+
