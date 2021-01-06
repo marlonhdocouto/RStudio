@@ -1,0 +1,657 @@
+---
+title: "Stock Market and Happiness"
+author: "Marlon Do Couto"
+date: "12/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+The first step is to download the data for the S&P500 index as a way to represent the stock market. Below, I also get quarterly returns for the data since lots of the indicators I will look at are actually quarterly indicators. 
+
+I also download the real GDP data from the FRED.
+
+```{r, messages=FALSE, warning=FALSE}
+
+library(quantmod)
+sp<-new.env()
+getSymbols('^GSPC',env=sp,from='1975-06-30',src = "yahoo")
+getSymbols('GDPC1',from='1975-01-01',src='FRED')
+
+GSPC<-sp$GSPC
+GSPC.quarter<-periodReturn(GSPC,period = 'quarterly',from='1975-07-01',leading=TRUE,type = "log")
+head(GSPC.quarter)
+
+GDP.quarter<-quarterlyReturn(GDPC1)
+head(GDP.quarter)
+GDP.quarter<-GDP.quarter[115:nrow(GDP.quarter),]
+
+GSPC.quarter<-GSPC.quarter[1:(nrow(GSPC.quarter)-3),]
+nrow(GSPC.quarter)
+nrow(GDP.quarter)
+```
+
+
+
+Now, I have to adjust time-series by one day since the day for the quarterly returns for the SP and GDP are off by a day in quantmod. I do that by renaming the SP timeseries according to the GDP timeseries. I then rebind both together in a single dataframe so it is easier to plot using ggplot2.
+
+
+
+```{r,message=FALSE,warning=FALSE}
+
+library(ggthemes)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+sp<-as.matrix(GSPC.quarter)
+gdp<-as.matrix(GDP.quarter)
+rownames(sp)<-rownames(gdp)
+sp_gdp<-as.data.frame(cbind(sp,gdp))
+colnames(sp_gdp)<-c("sp500.returns","gdp.growth")
+
+graph1<-sp_gdp%>%ggplot(aes(sp500.returns,gdp.growth))+geom_point()+theme_economist()+
+  geom_smooth(method = "lm")+labs(title = "S&P500 and GDP Growth",x="SP returns",y="GDP growth")
+
+head(sp_gdp)
+graph1
+cor(sp,gdp)
+
+```
+
+
+
+
+There is a strong correlation between the GDP growth and the S&P growth.With any economic analysis (or any analysis, really), one issue is the one of which one *causes* the other...
+
+For instance, we have found a 31% relationship between the S&P returns and GDP growth. We could go ahead and say that stock market impacts the gdp by that amount. But what if the relationship is actually reversed? Meaning, gdp growth leads to higher stock returns? This seems quite possible since the market prices is really a reflection of investor sentiment about companies and their view of the economy will affect how they view stocks.
+
+To test for that, I will match a previous quarter growth to the S&P returns for the follow quarter. In summary, I will correlate **GDP growth at time=t** with **S&P returns at time= t+1**.
+
+I then see if there are effects of the S&P500 in the economy in following quarters by looking at S&P at time t and GDP growth at both t+1 and t+2.
+
+
+```{r}
+
+spx<-sp[2:nrow(sp),]
+gdpx<-gdp[1:(nrow(gdp)-1)]
+gdpx_spx<-as.data.frame(cbind(gdpx,spx))
+colnames(gdpx_spx)<-c("gdp.growth.t","sp500.returns.t1")
+
+graph2<-gdpx_spx%>%ggplot(aes(gdp.growth.t,sp500.returns.t1))+geom_point()+geom_smooth(method="lm")+
+  theme_economist()+labs(title="Does GDP growth affects the stock market?",x="GDP growth at t",y="SP returns at t+1")
+
+sp_1<-sp[1:180,]
+gdp_1<-gdp[2:181,]
+sp_gdp_1<-as.data.frame(cbind(sp_1,gdp_1))
+colnames(sp_gdp_1)<-c("sp500.returns","gdp.growth")
+head(sp_gdp_1)
+
+sp_2<-sp[1:179,]
+gdp_2<-gdp[3:181,]
+sp_gdp_2<-as.data.frame(cbind(sp_2,gdp_2))
+colnames(sp_gdp_2)<-c("sp500.returns","gdp.growth")
+head(sp_gdp_2)
+
+cor(spx,gdpx)
+cor(sp_1,gdp_1)
+cor(sp_2,gdp_2)
+
+graph3<-sp_gdp_1%>%ggplot(aes(sp500.returns,gdp.growth))+geom_point()+theme_economist()+
+  geom_smooth(method = "lm")+labs(title="Do S&P 500 returns linger in the economy?",x="SP returns at t",y="GDP growth at t+1")
+
+graph4<-sp_gdp_2%>%ggplot(aes(sp500.returns,gdp.growth))+geom_point()+theme_economist()+
+  geom_smooth(method = "lm")+labs(title="Do S&P 500 returns linger in the economy?",x="SP returns at t",y="GDP growth at t+2")
+
+graph1
+graph2
+graph3
+graph4
+
+
+```
+
+
+
+It seems like the strong relationship we saw before is no longer present both when you try to analyse whether the stock market is actually affected by the economy or if the stock market effects are lingering. The latter makes sense since the stock market is quite volatile so we wouldn't expected a strong quarter to linger too long in the economy since the next quarter might already be a bad one for companies or the economy too.
+
+
+Next, I look at real dollar terms for both GDP and S&P returns. Can we see a any relationship?  
+
+For the next part, I also had to do some matching of the data due to the off day mentioned before. Moreover,some of the GDP quarterly data is released on January 01, which is a non-trading day for the market. That is why I have to index both observations to match to only observations when the market was open and a price was recorded.
+
+
+```
+The calculation of real S&P prices is based on CPI (CPIAUCSL) for December 2012 to match the one used by the FRED for Real GDP 
+(December 2012 CPI was 231.221). Note that GDPC1 is already Real GDP so no modifications were needed.
+
+```
+I then scale both numbers.
+
+```{r}
+
+sp_nominal<-as.matrix(GSPC$GSPC.Close)
+gdp_real<-as.matrix(GDPC1[115:NROW(GDPC1),])
+head(gdp_real)
+head(sp_nominal)
+
+sp_names<-rownames(sp_nominal)
+gdp_names<-rownames(gdp_real)
+sp_quarterly.index<-c()
+gdp_quarterly.index<-c()
+
+#matching index names:
+for(i in 1:length(gdp_names)){
+  
+  for(j in 1:length(sp_names)){
+    if (gdp_names[i] == sp_names[j]){
+      sp_quarterly.index<-append(sp_quarterly.index,j)
+      gdp_quarterly.index<-append(gdp_quarterly.index,i)
+      break}
+  }
+}
+head(sp_quarterly.index,20)
+head(gdp_quarterly.index,20)
+
+sp_nominal<-as.matrix(sp_nominal[sp_quarterly.index,])
+gdp_real_2<-as.matrix(gdp_real[gdp_quarterly.index,])
+
+#downloading CPI:
+getSymbols('CPIAUCSL',src='FRED')
+cpi<-CPIAUCSL
+cpi<-cpi[335:nrow(cpi),]
+
+sp_new_names<-rownames(sp_nominal)
+cpi_names<-rownames(as.matrix(cpi))
+
+#matching CPI to S&P:
+cpi.index<-c()
+
+for(i in 1:length(sp_new_names)){
+  
+  for(j in 1:length(cpi_names)){
+    if (sp_new_names[i] == cpi_names[j]){
+      cpi.index<-append(cpi.index,j)
+      break}
+  }
+}
+
+head(cpi.index)
+cpi<-as.matrix(cpi[cpi.index,])
+sp_nominal<-as.data.frame(sp_nominal)
+cpi<-as.data.frame(cpi)
+
+#calculating real SP prices:
+sp_real<-c()
+
+for(i in 1:nrow(sp_nominal)){
+  new.price<-sp_nominal[i,]*(cpi[i,]/231.221)
+  sp_real<-append(sp_real,new.price)
+  
+}
+
+
+sp_real_scaled<-scale(sp_real)
+gdp_real_2_scaled<-scale(gdp_real_2)
+sp_gdp_real_scaled<-as.data.frame(cbind(sp_real_scaled,gdp_real_2_scaled))
+colnames(sp_gdp_real_scaled)<-c("sp500.scaled","gdp.scaled")
+
+cor(sp_real_scaled,gdp_real_2_scaled)
+graph5<-sp_gdp_real_scaled%>%ggplot(aes(sp500.scaled,gdp.scaled))+geom_point()+theme_economist()+
+  geom_smooth(method="lm")+labs(title = "Real GDP and Real Stock Market Returns",x="SP returns",y="Real GDP growth")
+graph5
+```
+In money terms, it seems like there is a very strong correlation between the two, as we saw before. It is complicated to conclude something out of it though since prices do go up in most economies due to inflation. In that sense, you could potentially correlate lots of other products in the economy to the stock market and find strong correlations.
+
+I will come back to this point though. 
+
+Now, I want to look at other factors affecting the economy. Particularly, I now look at labor indicators. Is labor affected by the stock market? 
+
+The first indicator I analyze is the unemployment rate:
+
+
+```{r}
+
+getSymbols('LRUN64TTUSQ156S',from='1975-01-01',src='FRED')
+unrate<-LRUN64TTUSQ156S
+unrate.quarter<-unrate[23:nrow(unrate),]
+head(unrate.quarter)
+
+unem<-as.matrix(unrate.quarter)
+sp_3<-as.matrix(GSPC.quarter)
+rownames(sp_3)<-rownames(unem)
+sp_unem<-as.data.frame(cbind(sp_3,unem))
+colnames(sp_unem)<-c("sp500.returns","unemp.rate")
+head(sp_unem)
+sp_unem<-sp_unem%>%mutate(unemp.rate=unemp.rate/100)
+cor(sp_unem$sp500.returns,sp_unem$unemp.rate)
+graph6<-sp_unem%>%ggplot(aes(sp500.returns,unemp.rate))+geom_point()+theme_economist()+geom_smooth(method = "lm")+
+  labs(title = "Does the Stock Market Affect the Unemployment Rate?",x="SP returns",y="Unemployment Rate")
+graph6
+
+```
+
+
+
+As seen above, there is not a strong correlation between the S&P and unemployment rate. We do see a slight negative correlation though, showing that on average the a positive return on the market leads to a lower unemployment in the economy. 
+
+I want to also look at labor participation rate. My reasoning for this is twofold: even though the unemployment rate might not be quite impacted by the stock market, the participation rate might. The participation rate is also usually not given much attention as an indicator, but I believe it is very important to assess the health of a labor market (https://equitablegrowth.org/declining-labor-force-participation-rate-causes-consequences-path-forward/).
+
+
+```{r}
+
+getSymbols('CIVPART',src='FRED')
+participation<-CIVPART
+head(participation)
+participation<-participation[331:nrow(participation),]
+sp_month<-monthlyReturn(GSPC,type = "log")
+sp_month<-sp_month[1:(nrow(sp_month)-3),]
+
+part_2<-as.matrix(participation$CIVPART)
+sp_month_2<-as.matrix(sp_month)
+rownames(sp_month_2)<-rownames(part_2)
+cor(part_2,sp_month_2)
+
+```
+
+
+
+It seems like the relationship between the stock market and the labor participation rate is almost zero. Here, we see that the effects of stock returns on the labor force are quite week. 
+
+However, there is something else I'd like to check. As with GDP, perhaps there is a delay: the stock market rises and unemployment drops in the following quarter or next. Anecdotally, that could make sense. For instance, as the stock of a company rises, it might be able to access better funding to re-invest in the company. With that new funding, the company is able to expand and hire more people. There would be a delay though, as companies access sources of funding, implement projects, etc.
+
+
+```{r}
+
+unem_2<-unem[2:181,]
+sp_unem_2<-as.data.frame(cbind(sp_2,unem_2))
+unem_3<-unem[3:181]
+sp_unem_3<-as.data.frame(cbind(sp_3,unem_3))
+sp_unem_2<-sp_unem_2%>%mutate(unem_2=unem_2/100)
+sp_unem_3<-sp_unem_3%>%mutate(unem_3=unem_3/100)
+colnames(sp_unem_2)<-c("sp500.returns","unemp.rate")
+colnames(sp_unem_3)<-c("sp500.returns","unemp.rate")
+
+cor(sp_unem_2$sp500.returns,sp_unem_2$unemp.rate)
+cor(sp_unem_3$sp500.returns,sp_unem_3$unemp.rate)
+
+graph7<-sp_unem_2%>%ggplot(aes(sp500.returns,unemp.rate))+geom_point()+theme_economist()+geom_smooth(method = "lm")+
+  labs(title="The effect of SP returns at t in the Unemployment rate at t+1",x="SP returns (t)",y="Unemployment (t+1)")
+graph8<-sp_unem_3%>%ggplot(aes(sp500.returns,unemp.rate))+geom_point()+theme_economist()+geom_smooth(method = "lm")+
+  labs(title="The effect of SP returns at t in the Unemployment rate at t+2",x="SP returns (t)",y="Unemployment (t+2)")
+
+graph7
+graph8
+```
+
+
+As seen above, there is a relationship between the stock returns in quarter t and the unemployment at t+2. The relationship is even stronger than what we first assessed. This might be due to what I first thought could be true: the results of a stronger stock (funding, expansion) will take some time to trickle down into the labor market. Yet, the correlation is not very strong so any interpretation has to be taken with a grain of salt. 
+
+
+Next, I move into manufacturing new orders and how it is affected by the stock market. Manufacturing is an important indicator in the economy. I will be looking at the durable goods manufacturing index (*DGORDER*). 
+
+```
+The first observation for the index is from 1992-02-01 so the data is matched to reflect that
+```
+
+```{r}
+getSymbols('DGORDER',src="FRED")
+new.orders<-DGORDER
+orders.month<-monthlyReturn(new.orders)
+orders.month<-orders.month[2:nrow(orders.month),]
+
+sp_4<-monthlyReturn(GSPC)
+sp_4<-sp_4[201:(nrow(sp_4)-3),]
+sp_4<-as.matrix(sp_4)
+orders.month<-as.matrix(orders.month)
+rownames(sp_4)<-rownames(orders.month)
+sp_orders<-as.data.frame(cbind(sp_4,orders.month))
+colnames(sp_orders)<-c("sp500.returns","orders.growth")
+head(sp_orders)
+
+
+cor(sp_orders$sp500.returns,sp_orders$orders.growth)
+graph9<-sp_orders%>%ggplot(aes(sp500.returns,orders.growth))+geom_point()+theme_economist()+geom_smooth(method = "lm")+
+  labs(title = "Effect of the stock market on Durable Goods Manufacturing",x="SP returns",y="Durable Goods growth")
+graph9
+```
+
+
+Higher returns are correlated with stronger durable order growth. However, is the stock market affecting the orders (or orders are creating more confidence and therefore the stock market is also getting confident?). This is the same issue I tried to assess before with GDP.
+
+I will solve this just as I did for the previous relationships:
+- I will correlate SP500 returns at time *t* with the order growth at time *t+1*.
+- I will correlate order growth at time *t* with the SP500 return at *t+1*.
+
+```{r}
+sp_5<-sp_4[1:nrow(sp_4)-1,]
+orders.month_2<-orders.month[2:nrow(orders.month),]
+rownames(orders.month_2)<-rownames(sp_5)
+sp_orders_2<-as.data.frame(cbind(sp_5,orders.month_2))
+colnames(sp_orders_2)<-c("sp500.returns_t","orders.growth_t_1")
+
+
+orders.month_3<-orders.month[1:nrow(orders.month)-1]
+sp_6<-sp_4[2:nrow(sp_4),]
+rownames(sp_6)<-rownames(orders.month_3)
+sp_orders_3<-as.data.frame(cbind(orders.month_3,sp_6))
+colnames(sp_orders_3)<-c("orders.growth_t","sp500.returns_t_1")
+
+head(sp_orders_2)
+head(sp_orders_3)
+cor(sp_5,orders.month_2)
+cor(sp_6,orders.month_3)
+
+graph10<-sp_orders_2%>%ggplot(aes(sp500.returns_t,orders.growth_t_1))+geom_point()+theme_economist()+geom_smooth(method="lm")+labs(title = "S&P500 returns at time t and Durable Goods Orders at t+1")
+graph11<-sp_orders_3%>%ggplot(aes(orders.growth_t,sp500.returns_t_1))+geom_point()+theme_economist()+geom_smooth(method="lm")+labs(title = "Durable Goods Orders at time t and S&P500 returns at t+1")
+
+graph10
+graph11
+
+```
+
+
+
+
+From the correlations above, it seems like the SP is affecting orders growth. However, there is some relationship in the reverse as well, as seen by the *5.38%* correlation between the orders growth at t and market returns at t+1.
+
+Now that I looked at unemployment, manufacturing, and the GDP, I will look at potential measures of happiness:
+
+- Consumer confidence (UMSENT: University of Michigan, available from Jan 1978)
+- Earning increases (CES)
+- Levels of debt
+- Inequality
+
+First, let's look at consumer confidence. The consumer confidence at 1978-01-01 indicates how costumers will behave for that month as the indicator gauges consumer expectations about the future. I will match the returns for the SP500 at 1978-01-31 (January returns) to the confidence recorded at 1978-02-01. This will gauge if the confidence is affected by the market. 
+
+
+
+```{r}
+getSymbols("UMCSENT",src='FRED')
+sentiment<-UMCSENT
+sentiment<-sentiment[304:nrow(sentiment),]
+
+sp_7<-monthlyReturn(GSPC,type = "log")
+sp_7<-sp_7[34:nrow(sp_7)-2,]
+head(sentiment)
+head(sp_7)
+
+sp_7<-as.matrix(sp_7)
+sentiment<-as.matrix(sentiment)
+rownames(sp_7)<-rownames(sentiment)
+sp_sentiment<-as.data.frame(cbind(sp_7,sentiment))
+colnames(sp_sentiment)<-c("sp500.returns_endperiod","sentiment_begperiod")
+head(sp_sentiment)
+
+cor(sp_7,sentiment)
+graph12<-sp_sentiment%>%ggplot(aes(sp500.returns_endperiod,sentiment_begperiod))+geom_point()+theme_economist()+geom_smooth(method="lm")+labs(title="S&P500 returns and Consumer Sentiment",x="SP returns",y="Sentiment Levels")
+graph12
+
+
+```
+
+
+
+There is some correlation between stock returns and confidence levels. Higher stock prices will on average correlate with stronger levels of confidence in the economy. This might actually be a result of the importance media and other means of communication gives to the stock market.
+
+Next, I look at earnings. I will take median real earnings, a quarterly indicator, since the average will be biased towards either higher earners or lower earners. 
+
+```
+Here, I match the the returns for a quarter with the median earnings for the following quarter. For instance, the quarterly return for Q4 1978 is matched with the median income on Q1 1979.
+```
+
+```{r}
+getSymbols('LES1252881600Q',src='FRED')
+earn<-LES1252881600Q
+head(earn)
+sp_8<-GSPC.quarter[15:(nrow(GSPC.quarter)-1),]
+head(sp_8)
+
+earn<-as.matrix(earn)
+sp_8<-as.matrix(sp_8)
+rownames(sp_8)<-rownames(earn)
+sp_earn<-as.data.frame(cbind(sp_8,earn))
+colnames(sp_earn)<-c("sp500.returns","median.week.earning")
+head(sp_earn)
+
+cor(sp_earn$sp500.returns,sp_earn$median.week.earning)
+graph13<-sp_earn%>%ggplot(aes(sp500.returns,median.week.earning))+geom_point()+theme_economist()+geom_smooth(method="lm")+
+  labs(title = "S&P500 and Median Income",x="SP returns",y="Median wages")
+graph13
+```
+
+
+
+
+It seems like there is an inverse relationship between returns and median weekly income. As returns increase, median income actually goes down. This is likely a reflection of the system: as companies cut wages (costs), the stock market rewards it with higher stock prices as it expects higher profits into the future. This is one of the results so far that does not bode well for the attention we pay to stock markets as an indicator of wealth in an economy.
+
+What about household debt? It looks like debt has been through the roof and indebted persons face financial uncertainty; therefore, we can assume them to be more unhappy. Is there relationship between stock market returns and the levels of debt in the economy?
+
+The measure for debt that was downloaded from the federal reserve website (https://www.federalreserve.gov/releases/g19/HIST/cc_hist_sa_levels.html) and it is the total revolving debt in the economy.
+
+To find about revolving debt: https://www.experian.com/blogs/ask-experian/credit-education/score-basics/credit-utilization-rate/
+
+```
+The first observation is on Jan/1/1968. This is possibly due to the fact that credit cards became widely introduced into the economy in the 50s and revolving debt only became widely available with BankAmericard (now Visa) in 1966. You can read more about this story here: https://www.creditcards.com/credit-card-news/history-of-credit-cards/
+```
+
+I will calculate the change in revolving debt and find correlations between totals and monthly changes
+
+```{r}
+library(readr)
+debt <- read_csv("debt.csv")
+debt[1,4]<-1316.77
+debt<-as.data.frame(debt)
+rownames(debt)<-debt[,1]
+debt<-debt[90:nrow(debt),2:4]
+
+rate_change<-c(0)
+for(i in 2:nrow(debt)){
+  rate<-debt[i,3]/debt[(i-1),2]
+  rate<-round(rate*100,3)
+  rate_change<-append(rate_change,rate)
+}
+debt<-cbind(debt,rate_change)
+debt<-debt[2:nrow(debt),]
+head(debt)
+
+sp_9<-monthlyReturn(GSPC)
+sp_9<-sp_9[1:(nrow(sp_9)-3),]
+
+debt_scaled<-scale(debt$`Revolving _monthly`)
+sp_9_scaled<-scale(sp_9$monthly.returns)
+sp_debt_scaled<-as.data.frame(cbind(sp_9,debt_scaled))
+colnames(sp_debt_scaled)<-c("sp500.scaled","debt.scaled")
+cor(debt_scaled,sp_9_scaled)
+graph14<-sp_debt_scaled%>%ggplot(aes(sp500.scaled,debt.scaled))+geom_point()+geom_smooth(method="lm")+
+  theme_economist()+labs(title = "The relationship between the S&P500 and Revolving Debt",x="SP returns (scaled)",
+                         y="Debt levels (scaled)")
+graph14
+
+```
+
+
+
+There is a 10% correlation between S&P returns and revolving debt in the economy. This might be correlated to what I saw before in relation to consumer confidence. As consumers get more confident about the economy and their prospects (probably due to rises in the stock market), they spend more and go into more debt. Whether this is good or bad is really out of the scope of this discussion. 
+
+
+__
+
+My idea to look at inequality as a way to measure happiness came from looking at the World Happiness Report (https://worldhappiness.report/ed/2020/). One of the measures used in the report to calculate happiness across countries is the index. The Gini index measures the inequality in a country where **0** means no inequality at all and **1** means one individual holding all the wealth. 
+
+
+```
+To read more about the Gini index:https://en.wikipedia.org/wiki/Gini_coefficient
+If you are interested in such measures, read also about the Lorenz Curve: https://www.investopedia.com/terms/l/lorenz-curve.asp
+
+```
+In addition to the data on Gini index (found at the Census Bureau per link below), the data below also contains the income growth in all 10 income percentiles in the U.S. for the past 52 years. 
+
+```
+To check the data on income inequality in the U.S. used here, visit: https://www.census.gov/data/tables/2020/demo/income-poverty/p60-270.html
+
+S&P 500 yearly prices taken from: https://www.multpl.com/s-p-500-historical-prices/table/by-year
+
+```
+
+
+
+```{r}
+
+gini<-read.csv("gini.csv")
+inequality<-read.csv("inequality.csv")
+sp.prices<-read.csv("spprices.csv")
+colnames(sp.prices)<-c("Year","Price")
+gini<-as.data.frame(t(gini))
+gini<-gini[2:nrow(gini),]
+gini<-as.numeric(gini)
+
+inequality<-as.data.frame(t(inequality))
+colnames(inequality)<-inequality[1,]
+inequality<-inequality[2:nrow(inequality),]
+
+inequality_gini<-as.data.frame(cbind(inequality,gini))
+rownames(inequality_gini)<-substr(rownames(inequality_gini),2,5)
+
+for(i in 1:ncol(inequality_gini)){
+  inequality_gini[,i]<-as.numeric(inequality_gini[,i])
+}
+
+inequality_gini2<-inequality_gini[1:(nrow(inequality_gini)-8),]
+tail(inequality_gini2)
+
+inequality_gini3<-as.data.frame(cbind(inequality_gini2,sp.prices))
+inequality_gini3<-inequality_gini3[,-7]
+head(inequality_gini3)
+
+cor(scale(inequality_gini3$gini),scale(inequality_gini3$Price))
+cor(scale(inequality_gini3$`Highest quintile`),scale(inequality_gini3$Price))
+cor(scale(inequality_gini3$`Middle quintile`),scale(inequality_gini3$Price))
+cor(scale(inequality_gini3$`Lowest quintile`),scale(inequality_gini3$Price))
+
+graph15<-inequality_gini3%>%ggplot(aes(log(gini),log(Price)))+geom_point()+
+  geom_smooth(method="lm")+theme_economist()+labs(title="Correlation between S&P and Inequality",x="SP returns (log)",
+                                       y="Gini Index (log)")
+graph15
+```
+
+Next, I want to graphically compare the growth of the S&P 500 with the growth of median income quintiles from previous dataframe:
+
+- I will reverse the order so it looks ascending by year (row number)
+- I will calculate the growth for each of the columns of median income quintiles and the growth of the S&P 500
+- I will simulate the growth of **$10,000** under each of the quintile brackets and the price of the S&P500. 
+
+
+```{r}
+rownames<-rownames(inequality_gini3)
+rownames<-as.numeric(rownames)
+rownames(inequality_gini3)<-rownames
+inequality_gini4<-inequality_gini3%>%arrange(-row_number())
+head(inequality_gini4)
+
+quintile.growth<-NULL
+growth.vector<-c(10)
+for (i in 1:ncol(inequality_gini4)){
+  
+  for (j in 2:nrow(inequality_gini4)){
+    
+    x<-growth.vector[(j-1)]*(inequality_gini4[j,i]/inequality_gini4[(j-1),i])
+    growth.vector<-append(growth.vector,x)
+  }
+  
+  quintile.growth<-cbind(quintile.growth,growth.vector)
+  
+  growth.vector<-c(10)
+}
+quintile.growth<-as.data.frame(quintile.growth[,-6])
+colnames(quintile.growth)<-c("low.quintile","second.quint","mid.quint","fourth.quint","high.quint","sp.income")
+rownames(quintile.growth)<-rownames(inequality_gini4)
+quintile.growth$year<-as.numeric(rownames(quintile.growth))
+
+head(quintile.growth)
+
+graph16<-quintile.growth%>%ggplot(aes(x=year))+
+  geom_line(aes(y=low.quintile),color="darkred")+
+  geom_line(aes(y=second.quint),color="steelblue")+
+  geom_line(aes(y=mid.quint),color="yellow")+
+  geom_line(aes(y=fourth.quint),color="black")+
+  geom_line(aes(y=high.quint),color="blue",size=2)+
+theme_economist()+
+  annotate(geom = "text",x=2015,y=19,label="Top 20%",colour="blue")+
+  labs(title="Growth of Median Income for 5 Quintiles",x="Year",y="Income (in thousands)")
+graph16
+```
+Now, to conclude, I want to look at wealth as a whole and check if there is a connection there. 
+
+The data for wealth is taken from the Federal Reserve website (https://www.federalreserve.gov/releases/z1/dataviz/dfa/distribute/chart/)
+
+
+For this part, I will focus on percentage of wealth in corporate equities and mutual fund shares and growth of this category. The table below was downloaded from the link above and the equity%ofwealth/growth were added by me on Excel: I computed it from year to year, starting on Q1 1990.
+
+Below, I transform the Date column into a numerical value so it can be easily plotted on ggplot. I then extract the info for the top 1% and bottom 50% into their own dataframes.
+
+```{r}
+wealth.growth<-read.csv("dfa-networth-levels-yearly.csv")
+wealth.growth$Income<-wealth.growth$Income/1000
+wealth.growth$Date<-as.numeric(substr(wealth.growth$Date,1,4))
+wealth.growth$Equity...of.wealth<-(wealth.growth$Equity...of.wealth)*100
+wealth.growth<-wealth.growth[,c(1,2,7,15,16,17)]
+colnames(wealth.growth)<-c("Year","Category","Equities.wealth","share.of.wealth.equities","growth.of.equities","income")
+
+head(wealth.growth)
+top.1<-wealth.growth%>%filter(Category=="Top1")
+next.9<-wealth.growth%>%filter(Category=="Next9")
+next.40<-wealth.growth%>%filter(Category=="Next40")
+bottom.50<-wealth.growth%>%filter(Category=="Bottom50")
+graph17<-wealth.growth%>%ggplot(aes(x=Year,y=share.of.wealth.equities,color=factor(Category)))+
+  geom_line()+labs(title="Share of Wealth in Equities and Mutual Funds",x="Year",
+                   y="Share (%)",color=" ")+theme_economist()
+
+graph17
+
+
+
+```
+
+Now, I want to plot the growth of a hypothetical $10,000 investment on 1990 under each bracket with the growth of the S&P 500 for the same period
+
+
+```{r}
+sp.prices[,1]<-as.numeric(sp.prices[,1])
+sp.prices.90<-sp.prices%>%filter(sp.prices$Year>=1990)%>%arrange(Year)
+
+growth.90<-c(1)
+for(i in 2:nrow(sp.prices.90)){
+  x.90<-sp.prices.90[i,2]/(sp.prices.90[(i-1),2])
+  growth.90<-append(growth.90,x.90)
+}
+
+sp.prices.90<-cbind(sp.prices.90,growth.90)
+
+sp.income<-c(10)
+
+for(i in 2:nrow(sp.prices.90)){
+  y.90<-sp.income[(i-1)]*sp.prices.90[i,3]
+  sp.income<-append(sp.income,y.90)
+}
+sp.prices.90<-cbind(sp.prices.90,sp.income)
+head(sp.prices.90)
+
+cor(sp.prices.90$sp.income,top.1$income[1:30])
+cor(sp.prices.90$sp.income,next.9$income[1:30])
+cor(sp.prices.90$sp.income,next.40$income[1:30])
+cor(sp.prices.90$sp.income,bottom.50$income[1:30])
+
+graph18<-ggplot(data=wealth.growth,aes(x=Year,y=income))+geom_line(aes(color=factor(Category)))+
+  theme_economist()+geom_step(data = sp.prices.90,aes(x=Year,y=sp.income),size=1)+
+  labs(title="Growth of $10,000 under each bracket and Stock Market",x="Year",
+                   y="Income (in thousands)",color=" ")
+graph18
+
+```
+
+
