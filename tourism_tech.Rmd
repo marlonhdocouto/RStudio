@@ -1,0 +1,109 @@
+---
+title: "Technology vs Tourism Stocks Pre and Post Pandemic"
+author: "Marlon Do Couto"
+date: "1/31/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The purpose of this case is to investigate the divergence between the technology and travel/leisure stocks prior to Covid-19 and after Covid-19. To do the analysis, I first pick ETFs that track both areas:
+
+**Travel and leisure**: I will divide  area into two main areas: *airlines* and *hotels*. To track the airline industry, I will use *JETS*; This ETF is totally invested in airlines and aviation with and 80/20 domestic and international allocation. To track hotels, I will also create a simple index of hotels/entertainment equally allocation with:
+- Marriott International (*MAR*)
+- Hilton Hotels (*HLT*)
+- Hyatt Hotels (*H*)
+- Choice Hotels (*CHH*)
+- Wyndham Hotels & Resorts (*WH*)
+
+**Technology**: For technology companies, we will use *QQQ* which has large holdings in the FANGs and other technology companies such as Tesla, NVIDIA, etc.
+
+First step, we will get our data using tidyquant. We will use data from 2019-01-01 so that we have observations pre and post pandemic. 
+
+```{r}
+library(tidyquant)
+library(tidyverse)
+library(timetk)
+
+date<-"2019-01-01"
+
+airlines.data<-tq_get("JETS",from=date,get="stock.prices")
+hotels<-c('MAR','HLT','H','CHH','WH')
+hotels.data<-tq_get(hotels,from=date,get="stock.prices")
+technology.data<-tq_get("QQQ",from=date,get="stock.prices")
+
+head(airlines.data)
+head(hotels.data)
+head(technology.data)
+```
+
+Now, let's create an equally-weighted portfolio of the hotel stocks:
+```{r}
+weights<-c(0.2,0.2,0.2,0.2,0.2)
+
+hotel.returns<-hotels.data%>%group_by(symbol)%>%tq_transmute(adjusted,periodReturn,period="daily",                                              col_rename="ret")
+hotel.index<-tq_portfolio(data=hotel.returns,assets_col = symbol,returns_col = ret,
+                          weights = weights,col_rename ="ret", wealth.index=FALSE) %>%
+  mutate(ret=if_else(row_number()==1,0,ret))%>%
+  mutate(cum.ret=cumprod(1+ret)-1)
+hotel.index$symbol<-"Hotels"
+hotel.index<-hotel.index[,-2]
+head(hotel.index)
+
+
+```
+Now, we calculate the returns for *JETS* and *QQQ* as well:
+
+```{r}
+tech.returns<-technology.data%>%tq_transmute(adjusted,periodReturn,period="daily",col_rename = "ret")%>%
+  mutate(ret=if_else(row_number()==1,0,ret))%>%mutate(cum.ret=cumprod(1+ret)-1)
+tech.returns$symbol<-"QQQ"
+tech.returns<-tech.returns[,-2]
+
+jets.returns<-airlines.data%>%tq_transmute(adjusted,periodReturn,period="daily",col_rename = "ret")%>%
+  mutate(ret=if_else(row_number()==1,0,ret))%>%mutate(cum.ret=cumprod(1+ret)-1)
+jets.returns$symbol<-"JETS"
+jets.returns<-jets.returns[,-2]
+
+head(tech.returns)
+head(jets.returns)
+```
+
+Now, we put together the returns into a single table:
+
+```{r}
+all.returns<-rbind(hotel.index,tech.returns,jets.returns)
+head(all.returns)
+```
+
+
+
+Now, let's graph the returns to see the changes:
+
+```{r}
+
+all.returns%>%ggplot(aes(x=date,y=cum.ret,color=symbol))+geom_line()+
+  theme_classic()+scale_y_continuous(breaks=seq(-0.5,1.2,0.1), labels = scales::percent)+
+  coord_cartesian(clip="off")+labs(x="Year-Month",y="Returns",title="QQQ, JETS, and Hotels Returns since Jan 01, 2019")
+```
+Now, using an animated chart with the gganimate package.
+
+```{r}
+library(gganimate)
+library(gifski)
+
+animatedplot<-all.returns%>%ggplot(aes(x=date,y=cum.ret,group=symbol,color=symbol))+
+  geom_line()+
+  geom_segment(aes(xend=ymd("2021-01-29"),yend=cum.ret),linetype=2)+
+  geom_text(aes(x=ymd("2021-01-29"),label=symbol),hjust=0)+
+  theme_classic()+theme(legend.position = "none")+
+  scale_y_continuous(breaks=seq(-0.5,1.2,0.1), labels = scales::percent)+
+  transition_reveal(date)+
+  labs(x="Date",y="Returns",title="QQQ, JETS and Hotels Returns since Jan 01, 2019")+ease_aes('linear')
+
+animate(animatedplot,duration = 5,fps=20,renderer = gifski_renderer())
+anim_save("tech_tourism.gif")
+```
+
