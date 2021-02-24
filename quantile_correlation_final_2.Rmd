@@ -1,0 +1,120 @@
+---
+title: "Quantile correlation"
+author: "Jiaxi Li, Marlon Do Couto"
+date: "2/13/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+# Rolling Quantile Correlation Graphs
+
+* Purpose: Explore and visualize quantile correlations among key financial assets
+
+* Method: Calculate the rolling quantile correlation of various ETFs by first using their daily returns and rolling it through a three year window (using 252 day convention for each year). The quantiles chosen are **0.05, 0.25, 0.50, 0.75 and 0.95** which were calculated using the QCSIS's qc() function^1. 
+
+* Data: Daily adjusted returns for the twelve main ETFs since their inception. 
+
+* Authors: 
+
+  + [Marlon Do Couto (December 2020 - Present)](https://www.linkedin.com/in/marlondocouto/)
+  
+  + [Scarlett Meng (December 2020 - Present)](https://www.linkedin.com/in/scarlettmeng/)
+
+  + [Jiaxi Li (December 2020 - Present)](https://www.linkedin.com/in/jiaxi-li-b0389111a/)
+
+[1] https://rdrr.io/cran/QCSIS/man/QCSIS-package.html 
+
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse) # contains ggplot2 tidyr dplyr
+library(lubridate)
+library(tidyquant)
+library(QCSIS) # for quantile correlation
+library(tibbletime) # rollapply fuction
+library(ggthemes)
+
+Main_ETFs <- c("IVV","IJH","IJR","AGG","TLT","IEFA","IEMG","IAU","GSG","FXE","FXB","FXY")
+Core_prices <- tq_get(Main_ETFs, get = "stock.prices")
+returns <- Core_prices %>%
+  group_by(symbol)%>%
+  tq_transmute(select = adjusted,
+               mutate_fun = periodReturn,
+               period="daily",
+               col_rename = "ret")%>%na.omit()
+
+rolling_quant_corr<-function(returns){
+  Combined <- returns %>%
+    rename(symbol1 = symbol,ret1 = ret)%>%
+    inner_join(returns %>%
+                 rename(symbol2 = symbol,
+                      ret2 = ret))
+  # Apply rollify function and qc function to create the rolling qc functions for 3 year trading window:
+  roll_qc_05 <- rollify(~ qc(.x, .y, 0.05)$rho, window = 252*3)
+  roll_qc_25 <- rollify(~ qc(.x, .y, 0.25)$rho, window = 252*3)
+  roll_qc_50 <- rollify(~ qc(.x, .y, 0.5)$rho, window = 252*3)
+  roll_qc_75 <- rollify(~ qc(.x, .y, 0.75)$rho, window = 252*3)
+  roll_qc_95 <- rollify(~ qc(.x, .y, 0.95)$rho, window = 252*3)
+
+  Corr.Matrix <- Combined %>%
+    ungroup() %>%
+    group_by(symbol1, symbol2) %>%
+    mutate(`0.05` = roll_qc_05(ret2, ret1),
+           `0.25` = roll_qc_25(ret2, ret1),
+           `0.50` = roll_qc_50(ret2, ret1),
+           `0.75` = roll_qc_75(ret2, ret1),
+           `0.95` = roll_qc_95(ret2, ret1))%>%
+    na.omit()%>%
+    pivot_longer(`0.05`:`0.95`, names_to = "Quantile", values_to = "QC")
+  
+  return(Corr.Matrix)
+}
+
+Corr.Matrix<-rolling_quant_corr(returns)
+
+```
+
+
+```{r}
+plot_roll_corr<-function(data){
+  graph.list<-list()
+  count<-0
+
+  for (i in unique(data$symbol1)){
+    count<-count+1
+    graph.list[[count]]<- Corr.Matrix%>%filter(symbol1==i)%>%filter(symbol2!=i)%>%
+      mutate(symbol2=factor(unique(symbol2)))%>%ggplot(aes(x=date,y=QC,color=factor(Quantile)))+
+      geom_line()+theme_economist()+
+      guides(color=guide_legend(override.aes = list(size=2)))+
+      scale_color_manual(values = c("#e6194B","#ffe119","#000075","#3cb44b","#f58231"))+
+      facet_wrap(~symbol2)+labs(title=paste("Correlations of ",i),x=" ",y=" ",color="Quantile")
+    }
+  return(graph.list)
+}
+
+graphs<-plot_roll_corr(Corr.Matrix)
+
+print(graphs[1:12])
+```
+```{r}
+Combined<-returns%>%rename(symbol1=symbol, ret1=ret)%>%
+  inner_join(returns%>%rename(symbol2=symbol, ret2= ret))
+
+rolling<-rollify(~cor(.x,.y),window = 252*3)
+
+Normal.Corr<-Combined%>%filter(symbol1=="IVV")%>%filter(symbol2=="IJR")%>%
+  mutate(cor=rolling(ret2,ret1))%>%na.omit()
+  
+
+corr2<- Normal.Corr%>%ggplot(aes(x=date,y=cor))+
+  geom_line()+theme_economist()+
+  guides(color=guide_legend(override.aes = list(size=2)))+
+  labs(title="Traditional Correlations of IVV and IJR",x=" ",y=" ")
+
+corr2
+ggsave("ivv_ijr_normal.png",corr2)
+```
+
